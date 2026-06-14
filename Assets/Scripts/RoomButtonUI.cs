@@ -6,34 +6,37 @@ using UnityEngine.UI;
 
 public class RoomButtonUI : MonoBehaviour
 {
-    [SerializeField] private TMP_Text roomText;
-    [SerializeField] private Button button;
+    [SerializeField] private TMP_Text roomNameText;
+    [SerializeField] private TMP_Text playersCountText;
+    [SerializeField] private Button joinButton;
 
     private SessionInfo sessionInfo;
-    private Action<SessionInfo> onClick;
+    private Action<SessionInfo> onJoinClicked;
 
-    public void Init(SessionInfo session, Action<SessionInfo> clickAction)
+    public void Init(SessionInfo session, Action<SessionInfo> onClick)
     {
         sessionInfo = session;
-        onClick = clickAction;
+        onJoinClicked = onClick;
 
-        roomText.text = $"{session.Name} ({session.PlayerCount}/{session.MaxPlayers})";
+        roomNameText.text = session.Name;
+        playersCountText.text = $"{session.PlayerCount}/{session.MaxPlayers}";
 
-        button.interactable = session.IsOpen && session.PlayerCount < session.MaxPlayers;
+        bool canJoin = session.IsOpen && session.PlayerCount < session.MaxPlayers;
+
+        joinButton.interactable = canJoin;
+
+        joinButton.onClick.RemoveAllListeners();
+        joinButton.onClick.AddListener(Join);
     }
 
-    private void Awake()
+    private void Join()
     {
-        button.onClick.AddListener(Click);
-    }
+        if (sessionInfo == null)
+            return;
 
-    private void OnDestroy()
-    {
-        button.onClick.RemoveListener(Click);
-    }
+        if (!sessionInfo.IsOpen || sessionInfo.PlayerCount >= sessionInfo.MaxPlayers)
+            return;
 
-    private void Click()
-    {
-        onClick?.Invoke(sessionInfo);
+        onJoinClicked?.Invoke(sessionInfo);
     }
 }

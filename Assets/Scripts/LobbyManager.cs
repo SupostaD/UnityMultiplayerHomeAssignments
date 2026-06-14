@@ -1,99 +1,286 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using Fusion;
 using Fusion.Sockets;
 using TMPro;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 {
     [Header("Fusion")]
     [SerializeField] private NetworkRunner runnerPrefab;
+    [SerializeField] private int gameSceneBuildIndex = 1;
 
-    [Header("Inputs")]
+    [Header("Panels")]
+    [SerializeField] private LobbyPanelsUI panelsUI;
+
+    [Header("Menu Panel Buttons")]
+    [SerializeField] private Button openLobbyPanelButton;
+    [SerializeField] private Button exitButton;
+    
+    [Header("Player Name Panel")]
+    [SerializeField] private TMP_InputField playerNameInput;
+    [SerializeField] private Button confirmPlayerNameButton;
+    [SerializeField] private Button backFromPlayerNameButton;
+
+    [Header("Lobby Player Info")]
+    [SerializeField] private NetworkObject lobbyPlayerInfoPrefab;
+
+    [Header("Lobby Panel")]
     [SerializeField] private TMP_InputField lobbyNameInput;
-    [SerializeField] private TMP_InputField roomNameInput;
-    [SerializeField] private TMP_InputField maxPlayersInput;
-
-    [Header("Buttons")]
     [SerializeField] private Button joinLobbyButton;
-    [SerializeField] private Button createRoomButton;
-    [SerializeField] private Button leaveButton;
+    [SerializeField] private Button backFromLobbyButton;
 
-    [Header("Room List")]
-    [SerializeField] private Transform roomListParent;
+    [Header("Room Panel")]
+    [SerializeField] private TMP_InputField roomNameInput;
+    [SerializeField] private TMP_Dropdown maxPlayersDropdown;
+    [SerializeField] private Button createRoomButton;
+    [SerializeField] private Button leaveFromRoomsButton;
+
+    [Header("Waiting Panel")]
+    [SerializeField] private Button leaveFromWaitingButton;
+    [SerializeField] private Button startGameButton;
+
+    [Header("Room List Scroll View")]
+    [SerializeField] private Transform roomListContent;
     [SerializeField] private RoomButtonUI roomButtonPrefab;
 
-    [Header("Texts")]
+    [Header("Players List Scroll View")]
+    [SerializeField] private Transform playersListContent;
+    [SerializeField] private PlayerRowUI playerRowPrefab;
+
+    [Header("Optional Texts")]
     [SerializeField] private TMP_Text statusText;
     [SerializeField] private TMP_Text lobbyText;
     [SerializeField] private TMP_Text roomText;
-    [SerializeField] private TMP_Text playersText;
+    
+    public static LobbyManager Instance { get; private set; }
 
     private NetworkRunner runner;
+    private NetworkSceneManagerDefault sceneManager;
+    private string localPlayerName;
+    private Coroutine refreshPlayersCoroutine;
+
     private string currentLobbyName;
+    private string currentRoomName;
+
+    private bool isBusy;
     private bool isInLobby;
     private bool isInRoom;
 
     private void Awake()
     {
+        Instance = this;
+
         CreateRunner();
-        
+
+        panelsUI.ShowMainMenu();
+
+        openLobbyPanelButton.onClick.AddListener(OpenPlayerNamePanel);
+        exitButton.onClick.AddListener(ExitGame);
+
+        confirmPlayerNameButton.onClick.AddListener(ConfirmPlayerName);
+        backFromPlayerNameButton.onClick.AddListener(BackFromPlayerNamePanel);
+
         joinLobbyButton.onClick.AddListener(JoinLobby);
+        backFromLobbyButton.onClick.AddListener(BackFromLobbyPanel);
+
         createRoomButton.onClick.AddListener(CreateRoom);
-        leaveButton.onClick.AddListener(Leave);
+        leaveFromRoomsButton.onClick.AddListener(LeaveAll);
+
+        leaveFromWaitingButton.onClick.AddListener(LeaveAll);
+        startGameButton.onClick.AddListener(StartGameForAll);
+
+        playerNameInput.onValueChanged.AddListener(_ => RefreshButtons());
+        lobbyNameInput.onValueChanged.AddListener(_ => RefreshButtons());
+        roomNameInput.onValueChanged.AddListener(_ => RefreshButtons());
+        maxPlayersDropdown.onValueChanged.AddListener(_ => RefreshButtons());
+
+        ClearRoomList();
+        ClearPlayersList();
+
+        SetStatus("Ready");
+        SetLobbyText("Lobby: Not joined");
+        SetRoomText("Room: Not joined");
 
         RefreshButtons();
-        RefreshPlayersText();
-
-        statusText.text = "Ready";
-        lobbyText.text = "Lobby: Not joined";
-        roomText.text = "Room: Not joined";
     }
 
     private void OnDestroy()
     {
-        if (runner)
-        {
+        if (runner != null)
             runner.RemoveCallbacks(this);
-        }
 
-        joinLobbyButton.onClick.RemoveListener(JoinLobby);
-        createRoomButton.onClick.RemoveListener(CreateRoom);
-        leaveButton.onClick.RemoveListener(Leave);
+        if (openLobbyPanelButton != null)
+            openLobbyPanelButton.onClick.RemoveListener(OpenPlayerNamePanel);
+
+        if (exitButton != null)
+            exitButton.onClick.RemoveListener(ExitGame);
+
+        if (confirmPlayerNameButton != null)
+            confirmPlayerNameButton.onClick.RemoveListener(ConfirmPlayerName);
+
+        if (backFromPlayerNameButton != null)
+            backFromPlayerNameButton.onClick.RemoveListener(BackFromPlayerNamePanel);
+
+        if (joinLobbyButton != null)
+            joinLobbyButton.onClick.RemoveListener(JoinLobby);
+
+        if (backFromLobbyButton != null)
+            backFromLobbyButton.onClick.RemoveListener(BackFromLobbyPanel);
+
+        if (createRoomButton != null)
+            createRoomButton.onClick.RemoveListener(CreateRoom);
+
+        if (leaveFromRoomsButton != null)
+            leaveFromRoomsButton.onClick.RemoveListener(LeaveAll);
+
+        if (leaveFromWaitingButton != null)
+            leaveFromWaitingButton.onClick.RemoveListener(LeaveAll);
+
+        if (startGameButton != null)
+            startGameButton.onClick.RemoveListener(StartGameForAll);
     }
 
     private void CreateRunner()
     {
-        runner = Instantiate(runnerPrefab);
-        runner.name = "NetworkRunner";
-        runner.AddCallbacks(this);
-    }
-    private async void JoinLobby()
-    {
-        currentLobbyName = lobbyNameInput.text;
-
-        if (string.IsNullOrWhiteSpace(currentLobbyName))
+        if (runnerPrefab == null)
         {
-            statusText.text = "Enter lobby name";
+            Debug.LogError("Runner Prefab is not assigned.");
             return;
         }
 
-        statusText.text = "Joining lobby...";
+        runner = Instantiate(runnerPrefab);
+        runner.name = "NetworkRunner";
 
-        StartGameResult result = await runner.JoinSessionLobby(SessionLobby.Shared, currentLobbyName);
+        DontDestroyOnLoad(runner.gameObject);
+
+        sceneManager = runner.GetComponent<NetworkSceneManagerDefault>();
+
+        if (sceneManager == null)
+            sceneManager = runner.gameObject.AddComponent<NetworkSceneManagerDefault>();
+
+        runner.AddCallbacks(this);
+    }
+
+    private void OpenPlayerNamePanel()
+    {
+        if (isBusy)
+            return;
+
+        panelsUI.ShowPlayerName();
+        SetStatus("Enter player name");
+        RefreshButtons();
+    }
+    
+    private void ConfirmPlayerName()
+    {
+        if (isBusy)
+            return;
+
+        string playerName = playerNameInput.text.Trim();
+
+        if (string.IsNullOrWhiteSpace(playerName))
+        {
+            SetStatus("Enter player name");
+            RefreshButtons();
+            return;
+        }
+
+        localPlayerName = playerName;
+
+        panelsUI.ShowLobby();
+        SetStatus("Enter lobby name");
+        RefreshButtons();
+    }
+
+    private void BackFromPlayerNamePanel()
+    {
+        if (isBusy)
+            return;
+
+        localPlayerName = string.Empty;
+
+        panelsUI.ShowMainMenu();
+        SetStatus("Ready");
+        RefreshButtons();
+    }
+
+    private void BackFromLobbyPanel()
+    {
+        if (isBusy)
+            return;
+
+        if (isInLobby || isInRoom)
+            return;
+
+        panelsUI.ShowPlayerName();
+        SetStatus("Enter player name");
+        RefreshButtons();
+    }
+
+    private async void JoinLobby()
+    {
+        if (string.IsNullOrWhiteSpace(localPlayerName))
+        {
+            SetStatus("Enter player name first");
+            panelsUI.ShowPlayerName();
+            RefreshButtons();
+            return;
+        }
+        
+        if (isBusy)
+            return;
+
+        string lobbyName = lobbyNameInput.text.Trim();
+
+        if (string.IsNullOrWhiteSpace(lobbyName))
+        {
+            SetStatus("Enter lobby name");
+            RefreshButtons();
+            return;
+        }
+
+        if (runner == null)
+        {
+            CreateRunner();
+        }
+
+        isBusy = true;
+        RefreshButtons();
+
+        SetStatus("Joining lobby...");
+
+        StartGameResult result = await runner.JoinSessionLobby(SessionLobby.Shared, lobbyName);
+
+        isBusy = false;
 
         if (result.Ok)
         {
+            currentLobbyName = lobbyName;
             isInLobby = true;
-            lobbyText.text = "Lobby: " + currentLobbyName;
-            statusText.text = "Joined lobby successfully";
+            isInRoom = false;
+
+            SetLobbyText("Lobby: " + currentLobbyName);
+            SetRoomText("Room: Not joined");
+
+            ClearRoomList();
+            ClearPlayersList();
+
+            panelsUI.ShowRooms();
+
+            SetStatus("Joined lobby successfully");
         }
         else
         {
+            currentLobbyName = string.Empty;
             isInLobby = false;
-            statusText.text = "Failed to join lobby: " + result.ShutdownReason;
+            isInRoom = false;
+
+            SetStatus("Failed to join lobby: " + result.ShutdownReason);
         }
 
         RefreshButtons();
@@ -101,49 +288,77 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
     private async void CreateRoom()
     {
+        if (isBusy)
+            return;
+
         if (!isInLobby)
         {
-            statusText.text = "Join lobby first";
+            SetStatus("Join lobby first");
+            RefreshButtons();
             return;
         }
 
-        string roomName = roomNameInput.text;
+        if (isInRoom)
+        {
+            SetStatus("You are already in a room");
+            RefreshButtons();
+            return;
+        }
+
+        string roomName = roomNameInput.text.Trim();
 
         if (string.IsNullOrWhiteSpace(roomName))
         {
-            statusText.text = "Enter room name";
+            SetStatus("Enter room name");
+            RefreshButtons();
             return;
         }
 
-        int maxPlayers = 2;
-        int.TryParse(maxPlayersInput.text, out maxPlayers);
-
-        if (maxPlayers < 2)
+        if (!TryGetMaxPlayers(out int maxPlayers))
         {
-            maxPlayers = 2;
+            SetStatus("Select max players from 2 to 5");
+            RefreshButtons();
+            return;
         }
 
-        statusText.text = "Creating room...";
+        isBusy = true;
+        RefreshButtons();
+
+        SetStatus("Creating room...");
 
         StartGameResult result = await runner.StartGame(new StartGameArgs
         {
             GameMode = GameMode.Shared,
             SessionName = roomName,
             PlayerCount = maxPlayers,
-            CustomLobbyName = currentLobbyName
+            CustomLobbyName = currentLobbyName,
+            SceneManager = sceneManager
         });
+
+        isBusy = false;
 
         if (result.Ok)
         {
+            currentRoomName = roomName;
             isInRoom = true;
-            roomText.text = "Room: " + roomName;
-            statusText.text = "Room created / joined successfully";
-            RefreshPlayersText();
+
+            SetRoomText("Room: " + currentRoomName);
+
+            ClearRoomList();
+
+            panelsUI.ShowWaiting();
+
+            SpawnLobbyPlayerInfo();
+            RequestPlayersListRefresh();
+
+            SetStatus("Room created successfully");
         }
         else
         {
+            currentRoomName = string.Empty;
             isInRoom = false;
-            statusText.text = "Failed to create room: " + result.ShutdownReason;
+
+            SetStatus("Failed to create room: " + result.ShutdownReason);
         }
 
         RefreshButtons();
@@ -151,171 +366,487 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
     private async void JoinRoom(SessionInfo session)
     {
-        statusText.text = "Joining room...";
+        if (isBusy)
+            return;
+
+        if (!isInLobby)
+        {
+            SetStatus("Join lobby first");
+            RefreshButtons();
+            return;
+        }
+
+        if (isInRoom)
+        {
+            SetStatus("You are already in a room");
+            RefreshButtons();
+            return;
+        }
+
+        if (session == null)
+        {
+            SetStatus("Room does not exist");
+            RefreshButtons();
+            return;
+        }
+
+        if (!session.IsOpen || session.PlayerCount >= session.MaxPlayers)
+        {
+            SetStatus("Room is full or closed");
+            RefreshButtons();
+            return;
+        }
+
+        isBusy = true;
+        RefreshButtons();
+
+        SetStatus("Joining room...");
 
         StartGameResult result = await runner.StartGame(new StartGameArgs
         {
             GameMode = GameMode.Shared,
             SessionName = session.Name,
-            CustomLobbyName = currentLobbyName
+            CustomLobbyName = currentLobbyName,
+            SceneManager = sceneManager
         });
+
+        isBusy = false;
 
         if (result.Ok)
         {
+            currentRoomName = session.Name;
             isInRoom = true;
-            roomText.text = "Room: " + session.Name;
-            statusText.text = "Joined room successfully";
-            RefreshPlayersText();
+
+            SetRoomText("Room: " + currentRoomName);
+
+            ClearRoomList();
+
+            panelsUI.ShowWaiting();
+
+            SpawnLobbyPlayerInfo();
+            RequestPlayersListRefresh();
+
+            SetStatus("Joined room successfully");
         }
         else
         {
+            currentRoomName = string.Empty;
             isInRoom = false;
-            statusText.text = "Failed to join room: " + result.ShutdownReason;
+
+            SetStatus("Failed to join room: " + result.ShutdownReason);
         }
 
         RefreshButtons();
     }
-
-    private async void Leave()
+    
+    private void SpawnLobbyPlayerInfo()
     {
-        statusText.text = "Leaving...";
+        if (runner == null)
+            return;
 
-        if (runner)
+        if (lobbyPlayerInfoPrefab == null)
         {
-            await runner.Shutdown();
-            runner = null;
+            Debug.LogError("Lobby Player Info Prefab is not assigned.");
+            return;
         }
+
+        NetworkObject existingObject = runner.GetPlayerObject(runner.LocalPlayer);
+
+        if (existingObject != null)
+            return;
+
+        NetworkObject playerObject = runner.Spawn(
+            lobbyPlayerInfoPrefab,
+            Vector3.zero,
+            Quaternion.identity,
+            runner.LocalPlayer
+        );
+
+        if (playerObject == null)
+        {
+            Debug.LogError("Failed to spawn LobbyPlayerInfo object.");
+            return;
+        }
+
+        LobbyPlayerInfo info = playerObject.GetComponent<LobbyPlayerInfo>();
+
+        if (info != null)
+        {
+            info.Player = runner.LocalPlayer;
+            info.PlayerName = localPlayerName;
+        }
+
+        runner.SetPlayerObject(runner.LocalPlayer, playerObject);
+    }
+
+    private void StartGameForAll()
+    {
+        if (isBusy)
+            return;
+
+        if (!isInRoom)
+        {
+            SetStatus("You are not in a room");
+            RefreshButtons();
+            return;
+        }
+
+        if (runner == null || !runner.IsSharedModeMasterClient)
+        {
+            SetStatus("Only MasterClient can start the game");
+            RefreshButtons();
+            return;
+        }
+
+        SetStatus("Loading game scene...");
+
+        runner.LoadScene(SceneRef.FromIndex(gameSceneBuildIndex), LoadSceneMode.Single);
+    }
+
+    private async void LeaveAll()
+    {
+        if (isBusy)
+            return;
+
+        isBusy = true;
+        RefreshButtons();
+
+        SetStatus("Leaving...");
 
         isInLobby = false;
         isInRoom = false;
 
-        lobbyText.text = "Lobby: Not joined";
-        roomText.text = "Room: Not joined";
+        currentLobbyName = string.Empty;
+        currentRoomName = string.Empty;
 
         ClearRoomList();
-        RefreshPlayersText();
+        ClearPlayersList();
+
+        SetLobbyText("Lobby: Not joined");
+        SetRoomText("Room: Not joined");
+
+        if (runner != null)
+        {
+            runner.RemoveCallbacks(this);
+
+            await runner.Shutdown();
+
+            if (runner != null)
+                Destroy(runner.gameObject);
+
+            runner = null;
+            sceneManager = null;
+        }
 
         CreateRunner();
 
-        RefreshButtons();
+        isBusy = false;
 
-        statusText.text = "Left. You can join a lobby again.";
+        panelsUI.ShowMainMenu();
+
+        SetStatus("Left");
+        RefreshButtons();
+    }
+
+    private void ExitGame()
+    {
+        Application.Quit();
+
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#endif
+    }
+
+    private bool TryGetMaxPlayers(out int maxPlayers)
+    {
+        maxPlayers = 0;
+
+        if (maxPlayersDropdown == null)
+            return false;
+
+        if (maxPlayersDropdown.options == null || maxPlayersDropdown.options.Count == 0)
+            return false;
+
+        string selectedText = maxPlayersDropdown.options[maxPlayersDropdown.value].text;
+
+        if (!int.TryParse(selectedText, out maxPlayers))
+        {
+            maxPlayers = maxPlayersDropdown.value + 2;
+        }
+
+        return maxPlayers >= 2 && maxPlayers <= 5;
     }
 
     private void RefreshButtons()
-    {
-        joinLobbyButton.interactable = !isInRoom;
-        createRoomButton.interactable = isInLobby && !isInRoom;
-        leaveButton.interactable = isInRoom;
-    }
+{
+    bool playerNameIsValid = playerNameInput != null &&
+                             !string.IsNullOrWhiteSpace(playerNameInput.text);
 
-    private void RefreshPlayersText()
-    {
-        if (!isInRoom)
-        {
-            playersText.text = "Players: -";
-            return;
-        }
+    bool lobbyNameIsValid = lobbyNameInput != null &&
+                            !string.IsNullOrWhiteSpace(lobbyNameInput.text);
 
-        string text = "Players:\n";
+    bool roomNameIsValid = roomNameInput != null &&
+                           !string.IsNullOrWhiteSpace(roomNameInput.text);
 
-        foreach (PlayerRef player in runner.ActivePlayers)
-        {
-            if (player == runner.LocalPlayer)
-            {
-                text += $"Player {player.PlayerId} (You)\n";
-            }
-            else
-            {
-                text += $"Player {player.PlayerId}\n";
-            }
-        }
+    bool maxPlayersIsValid = TryGetMaxPlayers(out _);
 
-        playersText.text = text;
-    }
+    if (openLobbyPanelButton != null)
+        openLobbyPanelButton.interactable = !isBusy && !isInLobby && !isInRoom;
+
+    if (exitButton != null)
+        exitButton.interactable = !isBusy;
+
+    if (confirmPlayerNameButton != null)
+        confirmPlayerNameButton.interactable = !isBusy &&
+                                               !isInLobby &&
+                                               !isInRoom &&
+                                               playerNameIsValid;
+
+    if (backFromPlayerNameButton != null)
+        backFromPlayerNameButton.interactable = !isBusy &&
+                                                !isInLobby &&
+                                                !isInRoom;
+
+    if (joinLobbyButton != null)
+        joinLobbyButton.interactable = !isBusy &&
+                                       !isInLobby &&
+                                       !isInRoom &&
+                                       !string.IsNullOrWhiteSpace(localPlayerName) &&
+                                       lobbyNameIsValid;
+
+    if (backFromLobbyButton != null)
+        backFromLobbyButton.interactable = !isBusy &&
+                                           !isInLobby &&
+                                           !isInRoom;
+
+    if (createRoomButton != null)
+        createRoomButton.interactable = !isBusy &&
+                                        isInLobby &&
+                                        !isInRoom &&
+                                        roomNameIsValid &&
+                                        maxPlayersIsValid;
+
+    if (leaveFromRoomsButton != null)
+        leaveFromRoomsButton.interactable = !isBusy && isInLobby && !isInRoom;
+
+    if (leaveFromWaitingButton != null)
+        leaveFromWaitingButton.interactable = !isBusy && isInRoom;
+
+    if (startGameButton != null)
+        startGameButton.interactable = !isBusy &&
+                                       isInRoom &&
+                                       runner != null &&
+                                       runner.IsSharedModeMasterClient;
+}
 
     private void ClearRoomList()
     {
-        foreach (Transform child in roomListParent)
-        {
+        if (roomListContent == null)
+            return;
+
+        foreach (Transform child in roomListContent)
             Destroy(child.gameObject);
-        }
     }
 
-    public void OnSessionListUpdated(NetworkRunner runner, List<SessionInfo> sessionList)
+    private void ClearPlayersList()
     {
+        if (playersListContent == null)
+            return;
+
+        foreach (Transform child in playersListContent)
+            Destroy(child.gameObject);
+    }
+
+    private void RefreshPlayersList()
+    {
+        ClearPlayersList();
+
+        if (!isInRoom || runner == null || playerRowPrefab == null || playersListContent == null)
+            return;
+
+        foreach (PlayerRef player in runner.ActivePlayers)
+        {
+            string playerName = "Player " + player.PlayerId;
+
+            NetworkObject playerObject = runner.GetPlayerObject(player);
+
+            if (playerObject != null)
+            {
+                LobbyPlayerInfo info = playerObject.GetComponent<LobbyPlayerInfo>();
+
+                if (info != null)
+                {
+                    string networkName = info.PlayerName.ToString();
+
+                    if (!string.IsNullOrWhiteSpace(networkName))
+                        playerName = networkName;
+                }
+            }
+
+            PlayerRowUI row = Instantiate(playerRowPrefab, playersListContent);
+
+            bool isLocal = player == runner.LocalPlayer;
+            bool isMaster = isLocal && runner.IsSharedModeMasterClient;
+
+            row.Init(playerName, player, isLocal, isMaster);
+        }
+    }
+    
+    public void RequestPlayersListRefresh()
+    {
+        if (refreshPlayersCoroutine != null)
+            StopCoroutine(refreshPlayersCoroutine);
+
+        refreshPlayersCoroutine = StartCoroutine(RefreshPlayersListRoutine());
+    }
+
+    private IEnumerator RefreshPlayersListRoutine()
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            RefreshPlayersList();
+            RefreshButtons();
+
+            yield return new WaitForSeconds(0.25f);
+        }
+
+        refreshPlayersCoroutine = null;
+    }
+
+    private void SetStatus(string message)
+    {
+        Debug.Log(message);
+
+        if (statusText != null)
+            statusText.text = message;
+    }
+
+    private void SetLobbyText(string message)
+    {
+        if (lobbyText != null)
+            lobbyText.text = message;
+    }
+
+    private void SetRoomText(string message)
+    {
+        if (roomText != null)
+            roomText.text = message;
+    }
+
+    public void OnSessionListUpdated(NetworkRunner callbackRunner, List<SessionInfo> sessionList)
+    {
+        if (!isInLobby || isInRoom || panelsUI.CurrentState != LobbyPanelState.Rooms)
+            return;
+
         ClearRoomList();
 
         foreach (SessionInfo session in sessionList)
         {
-            RoomButtonUI roomButton = Instantiate(roomButtonPrefab, roomListParent);
+            if (!session.IsVisible)
+                continue;
+
+            if (!session.IsOpen)
+                continue;
+
+            if (session.PlayerCount >= session.MaxPlayers)
+                continue;
+
+            RoomButtonUI roomButton = Instantiate(roomButtonPrefab, roomListContent);
             roomButton.Init(session, JoinRoom);
         }
 
-        statusText.text = "Room list updated";
+        SetStatus("Room list updated");
     }
 
-    public void OnPlayerJoined(NetworkRunner runner, PlayerRef player)
+    public void OnPlayerJoined(NetworkRunner callbackRunner, PlayerRef player)
     {
-        statusText.text = "Player joined: " + player.PlayerId;
-        RefreshPlayersText();
+        if (!isInRoom)
+            return;
+
+        SetStatus("Player joined: " + player.PlayerId);
+
+        RefreshPlayersList();
         RefreshButtons();
     }
 
-    public void OnPlayerLeft(NetworkRunner runner, PlayerRef player)
+    public void OnPlayerLeft(NetworkRunner callbackRunner, PlayerRef player)
     {
-        statusText.text = "Player left: " + player.PlayerId;
-        RefreshPlayersText();
+        if (!isInRoom)
+            return;
+
+        SetStatus("Player left: " + player.PlayerId);
+
+        RefreshPlayersList();
         RefreshButtons();
     }
 
-    public void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
+    public void OnShutdown(NetworkRunner callbackRunner, ShutdownReason shutdownReason)
     {
         isInLobby = false;
         isInRoom = false;
 
-        lobbyText.text = "Lobby: Not joined";
-        roomText.text = "Room: Not joined";
-        statusText.text = "Shutdown: " + shutdownReason;
+        currentLobbyName = string.Empty;
+        currentRoomName = string.Empty;
 
         ClearRoomList();
-        RefreshPlayersText();
+        ClearPlayersList();
+
+        SetLobbyText("Lobby: Not joined");
+        SetRoomText("Room: Not joined");
+        SetStatus("Shutdown: " + shutdownReason);
+
+        if (panelsUI != null)
+            panelsUI.ShowMainMenu();
+
         RefreshButtons();
     }
 
-    public void OnConnectedToServer(NetworkRunner runner)
+    public void OnConnectedToServer(NetworkRunner callbackRunner)
     {
-        statusText.text = "Connected to server";
+        SetStatus("Connected to server");
     }
 
-    public void OnConnectFailed(NetworkRunner runner, NetAddress remoteAddress, NetConnectFailedReason reason)
+    public void OnConnectFailed(NetworkRunner callbackRunner, NetAddress remoteAddress, NetConnectFailedReason reason)
     {
-        statusText.text = "Connection failed: " + reason;
+        SetStatus("Connection failed: " + reason);
         RefreshButtons();
     }
 
-    public void OnDisconnectedFromServer(NetworkRunner runner, NetDisconnectReason reason)
+    public void OnDisconnectedFromServer(NetworkRunner callbackRunner, NetDisconnectReason reason)
     {
-        statusText.text = "Disconnected: " + reason;
+        SetStatus("Disconnected: " + reason);
 
         isInLobby = false;
         isInRoom = false;
 
-        RefreshPlayersText();
+        ClearRoomList();
+        ClearPlayersList();
+
+        if (panelsUI != null)
+            panelsUI.ShowMainMenu();
+
         RefreshButtons();
     }
 
-    public void OnConnectRequest(NetworkRunner runner, NetworkRunnerCallbackArgs.ConnectRequest request, byte[] token) { }
-    public void OnCustomAuthenticationResponse(NetworkRunner runner, Dictionary<string, object> data) { }
-    public void OnHostMigration(NetworkRunner runner, HostMigrationToken hostMigrationToken) { }
-    public void OnInput(NetworkRunner runner, NetworkInput input) { }
-    public void OnInputMissing(NetworkRunner runner, PlayerRef player, NetworkInput input) { }
-    public void OnObjectEnterAOI(NetworkRunner runner, NetworkObject obj, PlayerRef player) { }
-    public void OnObjectExitAOI(NetworkRunner runner, NetworkObject obj, PlayerRef player) { }
-    public void OnReliableDataProgress(NetworkRunner runner, PlayerRef player, ReliableKey key, float progress) { }
-    public void OnReliableDataReceived(NetworkRunner runner, PlayerRef player, ReliableKey key, ArraySegment<byte> data) { }
-    public void OnSceneLoadDone(NetworkRunner runner) { }
-    public void OnSceneLoadStart(NetworkRunner runner) { }
-    public void OnUserSimulationMessage(NetworkRunner runner, SimulationMessagePtr message) { }
+    public void OnSceneLoadDone(NetworkRunner callbackRunner)
+    {
+        SetStatus("Scene loaded");
+    }
+
+    public void OnSceneLoadStart(NetworkRunner callbackRunner)
+    {
+        SetStatus("Loading scene...");
+    }
+
+    public void OnConnectRequest(NetworkRunner callbackRunner, NetworkRunnerCallbackArgs.ConnectRequest request, byte[] token) { }
+    public void OnCustomAuthenticationResponse(NetworkRunner callbackRunner, Dictionary<string, object> data) { }
+    public void OnHostMigration(NetworkRunner callbackRunner, HostMigrationToken hostMigrationToken) { }
+    public void OnInput(NetworkRunner callbackRunner, NetworkInput input) { }
+    public void OnInputMissing(NetworkRunner callbackRunner, PlayerRef player, NetworkInput input) { }
+    public void OnObjectEnterAOI(NetworkRunner callbackRunner, NetworkObject obj, PlayerRef player) { }
+    public void OnObjectExitAOI(NetworkRunner callbackRunner, NetworkObject obj, PlayerRef player) { }
+    public void OnReliableDataProgress(NetworkRunner callbackRunner, PlayerRef player, ReliableKey key, float progress) { }
+    public void OnReliableDataReceived(NetworkRunner callbackRunner, PlayerRef player, ReliableKey key, ArraySegment<byte> data) { }
+    public void OnUserSimulationMessage(NetworkRunner callbackRunner, SimulationMessagePtr message) { }
 }
 

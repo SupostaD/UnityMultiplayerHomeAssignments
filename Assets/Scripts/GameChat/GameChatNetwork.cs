@@ -23,7 +23,6 @@ public class GameChatNetwork : NetworkBehaviour
         cachedRunner = Runner;
 
         RegisterLocalName();
-
         InvokeRepeating(nameof(RegisterLocalName), 1f, 2f);
     }
 
@@ -101,7 +100,9 @@ public class GameChatNetwork : NetworkBehaviour
         if (string.IsNullOrWhiteSpace(finalName))
             finalName = GetPlayerName(senderPlayer);
 
-        GameChatUI.Instance?.AddGlobalMessage(finalName, message.ToString());
+        int characterIndex = GetPlayerCharacterIndex(senderPlayer);
+
+        GameChatUI.Instance?.AddGlobalMessage(finalName, characterIndex, message.ToString());
     }
 
     [Rpc(RpcSources.All, RpcTargets.All)]
@@ -124,7 +125,9 @@ public class GameChatNetwork : NetworkBehaviour
         if (string.IsNullOrWhiteSpace(finalName))
             finalName = GetPlayerName(senderPlayer);
 
-        GameChatUI.Instance?.AddPrivateMessage(finalName, message.ToString());
+        int characterIndex = GetPlayerCharacterIndex(senderPlayer);
+
+        GameChatUI.Instance?.AddPrivateMessage(finalName, characterIndex, message.ToString());
     }
 
     public string GetPlayerName(PlayerRef player)
@@ -133,6 +136,47 @@ public class GameChatNetwork : NetworkBehaviour
             return name;
 
         return "Player " + player.PlayerId;
+    }
+
+    public int GetPlayerCharacterIndex(PlayerRef player)
+    {
+        NetworkRunner runner = GetRunner();
+
+        if (runner == null)
+            return 0;
+
+        NetworkObject playerObject = runner.GetPlayerObject(player);
+
+        if (playerObject == null)
+            return 0;
+
+        NetworkPlayerCharacter playerCharacter =
+            playerObject.GetComponent<NetworkPlayerCharacter>();
+
+        if (playerCharacter == null)
+            return 0;
+
+        return playerCharacter.CharacterIndex;
+    }
+
+    public Color GetPlayerColor(PlayerRef player)
+    {
+        int characterIndex = GetPlayerCharacterIndex(player);
+
+        if (GameSceneManager.Instance == null)
+            return Color.white;
+
+        return GameSceneManager.Instance.GetCharacterColor(characterIndex);
+    }
+
+    public string GetCharacterColorHex(int characterIndex)
+    {
+        Color color = Color.white;
+
+        if (GameSceneManager.Instance != null)
+            color = GameSceneManager.Instance.GetCharacterColor(characterIndex);
+
+        return "#" + ColorUtility.ToHtmlStringRGB(color);
     }
 
     private string PrepareMessage(string message)

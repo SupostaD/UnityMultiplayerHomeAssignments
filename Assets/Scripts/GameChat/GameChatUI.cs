@@ -205,20 +205,30 @@ public class GameChatUI : MonoBehaviour
         return true;
     }
 
-    public void AddGlobalMessage(string senderName, string message)
+    public void AddGlobalMessage(string senderName, int characterIndex, string message)
     {
         senderName = EscapeRichText(senderName);
         message = EscapeRichText(message);
 
-        AddLine($"<b>{senderName}:</b> {message}");
+        string colorHex = "#FFFFFF";
+
+        if (GameChatNetwork.Instance != null)
+            colorHex = GameChatNetwork.Instance.GetCharacterColorHex(characterIndex);
+
+        AddLine($"<color={colorHex}><b>{senderName}:</b></color> {message}");
     }
 
-    public void AddPrivateMessage(string senderName, string message)
+    public void AddPrivateMessage(string senderName, int characterIndex, string message)
     {
         senderName = EscapeRichText(senderName);
         message = EscapeRichText(message);
 
-        AddLine($"<color=#FFAA00><b>Private from {senderName}:</b> {message}</color>");
+        string colorHex = "#FFFFFF";
+
+        if (GameChatNetwork.Instance != null)
+            colorHex = GameChatNetwork.Instance.GetCharacterColorHex(characterIndex);
+
+        AddLine($"<color=#FFAA00><b>Private from</b></color> <color={colorHex}><b>{senderName}:</b></color> {message}");
     }
 
     private void AddLine(string line)

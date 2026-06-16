@@ -10,13 +10,18 @@ public class ChatLocalNameSaver : MonoBehaviour
         SaveName();
 
         if (playerNameInput != null)
-            playerNameInput.onValueChanged.AddListener(_ => SaveName());
+            playerNameInput.onValueChanged.AddListener(OnNameChanged);
     }
 
     private void OnDestroy()
     {
         if (playerNameInput != null)
-            playerNameInput.onValueChanged.RemoveListener(_ => SaveName());
+            playerNameInput.onValueChanged.RemoveListener(OnNameChanged);
+    }
+
+    private void OnNameChanged(string value)
+    {
+        SaveName();
     }
 
     public void SaveName()

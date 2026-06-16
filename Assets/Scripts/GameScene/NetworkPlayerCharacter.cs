@@ -25,13 +25,19 @@ public class NetworkPlayerCharacter : NetworkBehaviour
 
     public override void FixedUpdateNetwork()
     {
-        if (!Object.HasStateAuthority) return;
+        if (!Object.HasStateAuthority)
+            return;
+
+        if (GameInputBlocker.IsGameplayInputBlocked)
+            return;
 
         Move();
 
-        if (Input.GetKeyDown(KeyCode.F)) SpawnObject();
+        if (Input.GetKeyDown(KeyCode.F))
+            SpawnObject();
 
-        if (Input.GetKeyDown(KeyCode.G)) TryDestroyNearbyObject();
+        if (Input.GetKeyDown(KeyCode.G))
+            TryDestroyNearbyObject();
     }
 
     private void Move()

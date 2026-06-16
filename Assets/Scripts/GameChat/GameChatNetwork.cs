@@ -18,14 +18,6 @@ public class GameChatNetwork : NetworkBehaviour
         Instance = this;
     }
 
-    public override void Spawned()
-    {
-        cachedRunner = Runner;
-
-        RegisterLocalName();
-        InvokeRepeating(nameof(RegisterLocalName), 1f, 2f);
-    }
-
     private void RegisterLocalName()
     {
         NetworkRunner runner = GetRunner();
@@ -95,6 +87,14 @@ public class GameChatNetwork : NetworkBehaviour
         NetworkString<_32> senderName,
         NetworkString<_64> message)
     {
+        NetworkRunner runner = GetRunner();
+
+        if (runner == null)
+            return;
+
+        if (runner.LocalPlayer == senderPlayer)
+            return;
+
         string finalName = senderName.ToString();
 
         if (string.IsNullOrWhiteSpace(finalName))
@@ -207,18 +207,52 @@ public class GameChatNetwork : NetworkBehaviour
 
     private NetworkRunner GetRunner()
     {
-        if (cachedRunner != null)
-            return cachedRunner;
-
-        cachedRunner = FindObjectOfType<NetworkRunner>();
         return cachedRunner;
     }
+    public override void Spawned()
+    {
+        cachedRunner = Runner;
 
+        RegisterLocalName();
+        InvokeRepeating(nameof(RegisterLocalName), 1f, 2f);
+    }
     private void OnDestroy()
     {
         CancelInvoke();
 
         if (Instance == this)
             Instance = null;
+    }
+    
+    public bool IsReady()
+    {
+        return cachedRunner != null;
+    }
+
+    public IEnumerable<PlayerRef> GetActivePlayers()
+    {
+        if (cachedRunner == null)
+            yield break;
+
+        foreach (PlayerRef player in cachedRunner.ActivePlayers)
+            yield return player;
+    }
+
+    public PlayerRef GetLocalPlayer()
+    {
+        if (cachedRunner == null)
+            return PlayerRef.None;
+
+        return cachedRunner.LocalPlayer;
+    }
+    
+    public int GetLocalPlayerCharacterIndex()
+    {
+        NetworkRunner runner = GetRunner();
+
+        if (runner == null)
+            return 0;
+
+        return GetPlayerCharacterIndex(runner.LocalPlayer);
     }
 }

@@ -2,41 +2,45 @@ using System.Collections.Generic;
 using Fusion;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class GameChatUI : MonoBehaviour
 {
-    public static GameChatUI Instance { get; private set; }
+     public static GameChatUI Instance { get; private set; }
 
-    [Header("UI")]
-    [SerializeField] private TMP_Text chatMessagesText;
+    [Header("Chat Input")]
     [SerializeField] private TMP_InputField chatInputField;
     [SerializeField] private TMP_Dropdown targetDropdown;
 
-    private NetworkRunner runner;
+    [Header("Chat Scroll View")]
+    [SerializeField] private ScrollRect chatScrollRect;
+    [SerializeField] private RectTransform chatContent;
+    [SerializeField] private ChatMessageRowUI messageRowPrefab;
 
-    private readonly List<string> chatLines = new List<string>();
+    private readonly List<ChatMessageRowUI> messageRows = new List<ChatMessageRowUI>();
     private readonly List<PlayerRef> dropdownPlayers = new List<PlayerRef>();
 
     private const int MaxChatLines = 20;
-
-    // Dropdown index 0 = All
     private const int AllOptionIndex = 0;
 
     private void Awake()
     {
         Instance = this;
+
+        if (chatScrollRect != null && chatContent == null)
+            chatContent = chatScrollRect.content;
     }
 
     private void Start()
     {
-        runner = FindObjectOfType<NetworkRunner>();
-
         if (chatInputField != null)
         {
             chatInputField.lineType = TMP_InputField.LineType.SingleLine;
             chatInputField.characterLimit = 60;
+
+            chatInputField.onSelect.AddListener(OnChatInputSelected);
+            chatInputField.onDeselect.AddListener(OnChatInputDeselected);
             chatInputField.onSubmit.AddListener(OnInputSubmitted);
-            chatInputField.ActivateInputField();
         }
 
         InvokeRepeating(nameof(RefreshTargetDropdown), 0.5f, 1f);
@@ -46,12 +50,18 @@ public class GameChatUI : MonoBehaviour
 
     private void Update()
     {
-        // Запасной вариант, если TMP_InputField.onSubmit вдруг тупит.
         if (chatInputField == null)
             return;
 
         if (!chatInputField.isFocused)
             return;
+
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            chatInputField.DeactivateInputField();
+            GameInputBlocker.UnblockGameplayInput();
+            return;
+        }
 
         if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
         {
@@ -61,11 +71,29 @@ public class GameChatUI : MonoBehaviour
 
     private void OnDestroy()
     {
+        CancelInvoke();
+
         if (chatInputField != null)
+        {
+            chatInputField.onSelect.RemoveListener(OnChatInputSelected);
+            chatInputField.onDeselect.RemoveListener(OnChatInputDeselected);
             chatInputField.onSubmit.RemoveListener(OnInputSubmitted);
+        }
+
+        GameInputBlocker.UnblockGameplayInput();
 
         if (Instance == this)
             Instance = null;
+    }
+    
+    private void OnChatInputSelected(string text)
+    {
+        GameInputBlocker.BlockGameplayInput();
+    }
+
+    private void OnChatInputDeselected(string text)
+    {
+        GameInputBlocker.UnblockGameplayInput();
     }
 
     private void OnInputSubmitted(string text)
@@ -91,8 +119,12 @@ public class GameChatUI : MonoBehaviour
             return;
         }
 
+        string localName = ChatLocalData.PlayerName;
+        int localCharacterIndex = chatNetwork.GetLocalPlayerCharacterIndex();
+
         if (IsAllSelected())
         {
+            AddOwnGlobalMessage(localName, localCharacterIndex, message);
             chatNetwork.SendGlobalMessage(message);
         }
         else
@@ -103,6 +135,9 @@ public class GameChatUI : MonoBehaviour
                 return;
             }
 
+            string targetName = chatNetwork.GetPlayerName(targetPlayer);
+
+            AddOwnPrivateMessage(targetName, localName, localCharacterIndex, message);
             chatNetwork.SendPrivateMessage(targetPlayer, message);
         }
 
@@ -131,7 +166,9 @@ public class GameChatUI : MonoBehaviour
             return;
 
         chatInputField.text = string.Empty;
-        chatInputField.ActivateInputField();
+        chatInputField.DeactivateInputField();
+
+        GameInputBlocker.UnblockGameplayInput();
     }
 
     private void RefreshTargetDropdown()
@@ -139,10 +176,9 @@ public class GameChatUI : MonoBehaviour
         if (targetDropdown == null)
             return;
 
-        if (runner == null)
-            runner = FindObjectOfType<NetworkRunner>();
+        GameChatNetwork chatNetwork = GameChatNetwork.Instance;
 
-        if (runner == null)
+        if (chatNetwork == null || !chatNetwork.IsReady())
             return;
 
         int oldValue = targetDropdown.value;
@@ -151,18 +187,18 @@ public class GameChatUI : MonoBehaviour
         targetDropdown.ClearOptions();
 
         List<string> options = new List<string>();
-
-        // 0 всегда All
         options.Add("All");
 
-        foreach (PlayerRef player in runner.ActivePlayers)
+        PlayerRef localPlayer = chatNetwork.GetLocalPlayer();
+
+        foreach (PlayerRef player in chatNetwork.GetActivePlayers())
         {
-            if (player == runner.LocalPlayer)
+            if (player == localPlayer)
                 continue;
 
             dropdownPlayers.Add(player);
 
-            string playerName = GetPlayerName(player);
+            string playerName = chatNetwork.GetPlayerName(player);
             options.Add(playerName);
         }
 
@@ -194,8 +230,6 @@ public class GameChatUI : MonoBehaviour
             return false;
 
         int selectedIndex = targetDropdown.value;
-
-        // 0 = All, значит private игроки начинаются с dropdown index 1
         int playerIndex = selectedIndex - 1;
 
         if (playerIndex < 0 || playerIndex >= dropdownPlayers.Count)
@@ -233,13 +267,46 @@ public class GameChatUI : MonoBehaviour
 
     private void AddLine(string line)
     {
-        chatLines.Add(line);
+        if (chatContent == null)
+        {
+            Debug.LogWarning("GameChatUI: Chat Content is not assigned.");
+            return;
+        }
 
-        while (chatLines.Count > MaxChatLines)
-            chatLines.RemoveAt(0);
+        if (messageRowPrefab == null)
+        {
+            Debug.LogWarning("GameChatUI: Message Row Prefab is not assigned.");
+            return;
+        }
 
-        if (chatMessagesText != null)
-            chatMessagesText.text = string.Join("\n", chatLines);
+        ChatMessageRowUI row = Instantiate(messageRowPrefab, chatContent);
+        row.Init(line);
+
+        messageRows.Add(row);
+
+        while (messageRows.Count > MaxChatLines)
+        {
+            ChatMessageRowUI oldRow = messageRows[0];
+            messageRows.RemoveAt(0);
+
+            if (oldRow != null)
+                Destroy(oldRow.gameObject);
+        }
+
+        ScrollToBottom();
+    }
+
+    private void ScrollToBottom()
+    {
+        if (chatScrollRect == null)
+            return;
+
+        Canvas.ForceUpdateCanvases();
+
+        if (chatContent != null)
+            LayoutRebuilder.ForceRebuildLayoutImmediate(chatContent);
+
+        chatScrollRect.verticalNormalizedPosition = 0f;
     }
 
     private string EscapeRichText(string text)
@@ -250,5 +317,32 @@ public class GameChatUI : MonoBehaviour
         return text
             .Replace("<", "&lt;")
             .Replace(">", "&gt;");
+    }
+    
+    public void AddOwnGlobalMessage(string senderName, int characterIndex, string message)
+    {
+        senderName = EscapeRichText(senderName);
+        message = EscapeRichText(message);
+
+        string colorHex = "#FFFFFF";
+
+        if (GameChatNetwork.Instance != null)
+            colorHex = GameChatNetwork.Instance.GetCharacterColorHex(characterIndex);
+
+        AddLine($"<color=#AAAAAA>[You]</color> <color={colorHex}><b>{senderName}:</b></color> {message}");
+    }
+
+    public void AddOwnPrivateMessage(string targetName, string senderName, int characterIndex, string message)
+    {
+        targetName = EscapeRichText(targetName);
+        senderName = EscapeRichText(senderName);
+        message = EscapeRichText(message);
+
+        string colorHex = "#FFFFFF";
+
+        if (GameChatNetwork.Instance != null)
+            colorHex = GameChatNetwork.Instance.GetCharacterColorHex(characterIndex);
+
+        AddLine($"<color=#FFAA00><b>Private to {targetName}</b></color> <color={colorHex}><b>{senderName}:</b></color> {message}");
     }
 }

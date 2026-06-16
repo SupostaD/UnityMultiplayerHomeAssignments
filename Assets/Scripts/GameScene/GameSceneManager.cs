@@ -1,7 +1,11 @@
 using System;
+using System.Threading.Tasks;
 using Fusion;
 using Fusion.Sockets;
+using TMPro;
 using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 {
@@ -13,26 +17,58 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     [SerializeField] private CharacterSelectionUI characterSelectionUI;
     [SerializeField] private Color[] characterColors = new Color[10];
 
+    [Header("End Game")]
+    [SerializeField] private Button endGameButton;
+    [SerializeField] private EndGameUI endGameUI;
+    [SerializeField] private GamePauseUI gamePauseUI;
+    [SerializeField] private GameObject endGamePanel;
+    [SerializeField] private TMP_Text endGameMessageText;
+    [SerializeField] private int mainMenuSceneBuildIndex = 0;
+
     [Networked, OnChangedRender(nameof(OnOccupiedCharactersChanged))]
     private int OccupiedCharactersMask { get; set; }
+
+    [Networked]
+    private PlayerRef OriginalHostPlayer { get; set; }
 
     public static GameSceneManager Instance { get; private set; }
 
     private const int MaxCharacters = 10;
+    private const int ShutdownTimeoutMilliseconds = 2000;
 
     private readonly PlayerRef[] characterOwners = new PlayerRef[MaxCharacters];
 
     private NetworkRunner runner;
     private NetworkObject localPlayerObject;
+    private PlayerRef localOriginalHostPlayer = PlayerRef.None;
+
+    private bool endGamePanelShown;
+    private bool gameEnded;
+    private bool isLeavingGameIntentionally;
+
+    public bool IsGameEnded => gameEnded;
 
     private void Awake()
     {
         Instance = this;
 
         for (int i = 0; i < characterOwners.Length; i++)
-        {
             characterOwners[i] = PlayerRef.None;
-        }
+
+        if (endGameButton != null)
+            endGameButton.onClick.AddListener(RequestEndGame);
+
+        if (gamePauseUI == null)
+            gamePauseUI = FindAnyObjectByType<GamePauseUI>();
+    }
+
+    private void OnDestroy()
+    {
+        if (endGameButton != null)
+            endGameButton.onClick.RemoveListener(RequestEndGame);
+
+        if (Instance == this)
+            Instance = null;
     }
 
     public override void Spawned()
@@ -40,9 +76,20 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         runner = Runner;
         runner.AddCallbacks(this);
 
-        if (Object.HasStateAuthority) OccupiedCharactersMask = 0;
+        RememberOriginalHost();
 
-        if (characterSelectionUI)
+        if (Object.HasStateAuthority)
+        {
+            OccupiedCharactersMask = 0;
+
+            if (OriginalHostPlayer == PlayerRef.None && localOriginalHostPlayer != PlayerRef.None)
+                OriginalHostPlayer = localOriginalHostPlayer;
+        }
+
+        HideEndGamePanel();
+        RefreshEndGameButton();
+
+        if (characterSelectionUI != null)
         {
             characterSelectionUI.Init(characterColors);
             characterSelectionUI.Refresh(OccupiedCharactersMask);
@@ -51,17 +98,249 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         }
     }
 
-    public override void Despawned(NetworkRunner runner, bool hasState)
+    public override void Despawned(NetworkRunner despawnRunner, bool hasState)
     {
-        if (runner) runner.RemoveCallbacks(this);
+        if (despawnRunner != null)
+            despawnRunner.RemoveCallbacks(this);
+    }
+
+    private void Update()
+    {
+        RefreshEndGameButton();
+        CheckOriginalHostStillInGame();
+    }
+
+    private void RefreshEndGameButton()
+    {
+        bool canEndGame =
+            runner != null &&
+            runner.IsSharedModeMasterClient &&
+            !gameEnded;
+
+        if (endGameButton != null)
+        {
+            endGameButton.gameObject.SetActive(canEndGame);
+            endGameButton.interactable = canEndGame;
+        }
+    }
+
+    public void RequestEndGame()
+    {
+        if (gameEnded)
+            return;
+
+        if (runner == null)
+            runner = Runner;
+
+        if (runner == null || !runner.IsSharedModeMasterClient)
+        {
+            Debug.Log("Only MasterClient can end the game.");
+            return;
+        }
+
+        string masterName = "MasterClient";
+
+        if (GameChatNetwork.Instance != null)
+            masterName = GameChatNetwork.Instance.GetPlayerName(runner.LocalPlayer);
+
+        RPC_ShowEndGamePanel($"Game ended by {masterName}.\nPress Exit to return to main menu.");
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.All)]
+    private void RPC_ShowEndGamePanel(NetworkString<_128> message)
+    {
+        ShowEndGamePanel(message.ToString());
+    }
+
+    private void ShowEndGamePanel(string message)
+    {
+        if (endGamePanelShown)
+            return;
+
+        endGamePanelShown = true;
+        gameEnded = true;
+
+        GameInputBlocker.BlockGameplayInput();
+
+        gamePauseUI?.CloseForGameEnd();
+        characterSelectionUI?.Hide();
+
+        if (endGameButton != null)
+            endGameButton.gameObject.SetActive(false);
+
+        if (endGameUI != null)
+        {
+            endGameUI.Show(message);
+        }
+        else if (endGamePanel != null)
+        {
+            endGamePanel.SetActive(true);
+
+            if (endGameMessageText != null)
+                endGameMessageText.text = message;
+        }
+    }
+
+    private void HideEndGamePanel()
+    {
+        endGamePanelShown = false;
+        gameEnded = false;
+
+        if (endGameUI != null)
+            endGameUI.Hide();
+        else if (endGamePanel != null)
+            endGamePanel.SetActive(false);
+    }
+
+    private void RememberOriginalHost()
+    {
+        if (runner == null || localOriginalHostPlayer != PlayerRef.None)
+            return;
+
+        localOriginalHostPlayer = GetCurrentMasterClient();
+
+        if (Object != null &&
+            Object.HasStateAuthority &&
+            OriginalHostPlayer == PlayerRef.None &&
+            localOriginalHostPlayer != PlayerRef.None)
+        {
+            OriginalHostPlayer = localOriginalHostPlayer;
+        }
+    }
+
+    private PlayerRef GetOriginalHostPlayer()
+    {
+        if (OriginalHostPlayer != PlayerRef.None)
+            return OriginalHostPlayer;
+
+        return localOriginalHostPlayer;
+    }
+
+    private PlayerRef GetCurrentMasterClient()
+    {
+        if (runner == null)
+            return PlayerRef.None;
+
+        try
+        {
+            return runner.GetMasterClient();
+        }
+        catch (Exception exception)
+        {
+            Debug.LogWarning("Unable to get current MasterClient: " + exception.Message);
+            return PlayerRef.None;
+        }
+    }
+
+    private void CheckOriginalHostStillInGame()
+    {
+        if (runner == null || gameEnded || isLeavingGameIntentionally)
+            return;
+
+        RememberOriginalHost();
+
+        PlayerRef originalHost = GetOriginalHostPlayer();
+
+        if (originalHost == PlayerRef.None)
+            return;
+
+        if (!IsPlayerActive(originalHost))
+        {
+            EndGameBecauseHostLeft();
+            return;
+        }
+
+        PlayerRef currentMasterClient = GetCurrentMasterClient();
+
+        if (currentMasterClient != PlayerRef.None && currentMasterClient != originalHost)
+            EndGameBecauseHostLeft();
+    }
+
+    private bool IsPlayerActive(PlayerRef player)
+    {
+        if (runner == null)
+            return false;
+
+        foreach (PlayerRef activePlayer in runner.ActivePlayers)
+        {
+            if (activePlayer == player)
+                return true;
+        }
+
+        return false;
+    }
+
+    private void EndGameBecauseHostLeft()
+    {
+        ShowEndGamePanel("Host left the game.\nGame is over.");
+    }
+
+    public async void LeaveCurrentGame()
+    {
+        if (isLeavingGameIntentionally)
+            return;
+
+        isLeavingGameIntentionally = true;
+
+        try
+        {
+            if (runner == null)
+                runner = Runner;
+
+            NetworkRunner runnerToShutdown = runner;
+            runner = null;
+
+            if (runnerToShutdown != null)
+            {
+                PlayerRef originalHost = GetOriginalHostPlayer();
+                bool localPlayerIsOriginalHost =
+                    originalHost != PlayerRef.None &&
+                    runnerToShutdown.LocalPlayer == originalHost;
+
+                if (localPlayerIsOriginalHost && !gameEnded)
+                {
+                    RPC_ShowEndGamePanel("Host left the game.\nGame is over.");
+                    await Task.Delay(250);
+                }
+
+                runnerToShutdown.RemoveCallbacks(this);
+
+                Task shutdownTask = runnerToShutdown.Shutdown();
+                Task finishedTask = await Task.WhenAny(
+                    shutdownTask,
+                    Task.Delay(ShutdownTimeoutMilliseconds)
+                );
+
+                if (finishedTask == shutdownTask)
+                {
+                    await shutdownTask;
+                }
+                else
+                {
+                    Debug.LogWarning("NetworkRunner shutdown timed out. Returning to main menu anyway.");
+                }
+
+                if (runnerToShutdown != null)
+                    Destroy(runnerToShutdown.gameObject);
+            }
+        }
+        catch (Exception exception)
+        {
+            Debug.LogWarning("Failed to leave current game cleanly: " + exception.Message);
+        }
+        finally
+        {
+            GameInputBlocker.UnblockGameplayInput();
+            SceneManager.LoadScene(mainMenuSceneBuildIndex);
+        }
     }
 
     public Color GetCharacterColor(int characterIndex)
     {
-        if (characterColors == null) 
+        if (characterColors == null)
             return Color.white;
 
-        if (characterIndex < 0 || characterIndex >= characterColors.Length) 
+        if (characterIndex < 0 || characterIndex >= characterColors.Length)
             return Color.white;
 
         return characterColors[characterIndex];
@@ -75,7 +354,7 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             return;
         }
 
-        if (localPlayerObject)
+        if (localPlayerObject != null)
         {
             characterSelectionUI?.SetStatus("You already spawned");
             return;
@@ -129,9 +408,11 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         Vector3 spawnPosition,
         float spawnYRotation)
     {
-        if (!runner) runner = Runner;
+        if (runner == null)
+            runner = Runner;
 
-        if (runner.LocalPlayer != targetPlayer) return;
+        if (runner.LocalPlayer != targetPlayer)
+            return;
 
         SpawnLocalPlayer(characterIndex, spawnPosition, spawnYRotation);
     }
@@ -141,7 +422,8 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         [RpcTarget] PlayerRef targetPlayer,
         string reason)
     {
-        if (!runner) runner = Runner;
+        if (runner == null)
+            runner = Runner;
 
         if (runner.LocalPlayer != targetPlayer)
             return;
@@ -152,15 +434,17 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     private void SpawnLocalPlayer(int characterIndex, Vector3 spawnPosition, float spawnYRotation)
     {
-        if (!runner) runner = Runner;
+        if (runner == null)
+            runner = Runner;
 
-        if (!playerPrefab)
+        if (playerPrefab == null)
         {
             Debug.LogError("Player Prefab is not assigned.");
             return;
         }
 
-        if (localPlayerObject) return;
+        if (localPlayerObject != null)
+            return;
 
         Quaternion spawnRotation = Quaternion.Euler(0f, spawnYRotation, 0f);
 
@@ -171,9 +455,11 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             runner.LocalPlayer
         );
 
-       NetworkPlayerCharacter playerCharacter = localPlayerObject.GetComponent<NetworkPlayerCharacter>();
+        NetworkPlayerCharacter playerCharacter =
+            localPlayerObject.GetComponent<NetworkPlayerCharacter>();
 
-        if (playerCharacter) playerCharacter.CharacterIndex = characterIndex;
+        if (playerCharacter != null)
+            playerCharacter.CharacterIndex = characterIndex;
 
         runner.SetPlayerObject(runner.LocalPlayer, localPlayerObject);
 
@@ -184,9 +470,10 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     {
         for (int i = 0; i < characterOwners.Length; i++)
         {
-            if (characterOwners[i] == player) return true;
+            if (characterOwners[i] == player)
+                return true;
         }
-        
+
         return false;
     }
 
@@ -202,7 +489,7 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     private Vector3 GetSpawnPosition(int characterIndex)
     {
-        if (spawnPoints == null || spawnPoints.Length == 0) 
+        if (spawnPoints == null || spawnPoints.Length == 0)
             return Vector3.zero;
 
         int spawnIndex = characterIndex % spawnPoints.Length;
@@ -225,20 +512,31 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     public void OnPlayerLeft(NetworkRunner callbackRunner, PlayerRef player)
     {
-        if (!Object.HasStateAuthority) return;
+        PlayerRef originalHost = GetOriginalHostPlayer();
+        bool originalHostLeft =
+            originalHost != PlayerRef.None &&
+            player == originalHost;
+
+        if (originalHostLeft && !isLeavingGameIntentionally)
+            EndGameBecauseHostLeft();
+
+        if (!Object.HasStateAuthority)
+            return;
 
         bool changed = false;
 
         for (int i = 0; i < characterOwners.Length; i++)
         {
-            if (characterOwners[i] != player) continue;
+            if (characterOwners[i] != player)
+                continue;
 
             characterOwners[i] = PlayerRef.None;
             OccupiedCharactersMask &= ~(1 << i);
             changed = true;
         }
 
-        if (changed) Debug.Log("Released character of player: " + player.PlayerId);
+        if (changed)
+            Debug.Log("Released character of player: " + player.PlayerId);
     }
 
     public void OnPlayerJoined(NetworkRunner callbackRunner, PlayerRef player) { }

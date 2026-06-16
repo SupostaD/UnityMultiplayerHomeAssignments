@@ -254,8 +254,8 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
         SetStatus("Joining lobby...");
 
-        StartGameResult result = await runner.JoinSessionLobby(SessionLobby.Shared, lobbyName);
-
+        StartGameResult result = await runner.JoinSessionLobby(SessionLobby.Custom, lobbyName);
+        
         isBusy = false;
 
         if (result.Ok)

@@ -18,14 +18,25 @@ public class NetworkPlayerCharacter : NetworkBehaviour
     [Networked, OnChangedRender(nameof(OnCharacterIndexChanged))]
     public int CharacterIndex { get; set; }
 
+    private bool usesRaceController;
+
+    private void Awake()
+    {
+        usesRaceController = GetComponent("RacePlayerController") != null;
+    }
+
     public override void Spawned()
     {
+        usesRaceController = GetComponent("RacePlayerController") != null;
         ApplyCharacterColor();
     }
 
     public override void FixedUpdateNetwork()
     {
         if (!Object.HasStateAuthority)
+            return;
+
+        if (usesRaceController)
             return;
 
         if (GameInputBlocker.IsGameplayInputBlocked)

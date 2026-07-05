@@ -10,9 +10,51 @@ using UnityEngine.UI;
 
 public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 {
+    public const string GameModeSessionPropertyKey = "GameMode";
+    public const string MapSessionPropertyKey = "Map";
+    public const string SceneBuildIndexSessionPropertyKey = "SceneBuildIndex";
+
+    [Serializable]
+    private class LobbyMapOption
+    {
+        public string mapName = "Map";
+        public int sceneBuildIndex = 1;
+    }
+
+    [Serializable]
+    private class LobbyGameModeOption
+    {
+        public string gameModeName = "Deathmatch";
+        public LobbyMapOption[] maps;
+    }
+
     [Header("Fusion")]
     [SerializeField] private NetworkRunner runnerPrefab;
     [SerializeField] private int gameSceneBuildIndex = 1;
+
+    [Header("Game Modes And Maps")]
+    [SerializeField]
+    private LobbyGameModeOption[] gameModeOptions =
+    {
+        new LobbyGameModeOption
+        {
+            gameModeName = "Deathmatch",
+            maps = new[]
+            {
+                new LobbyMapOption { mapName = "Dust", sceneBuildIndex = 1 },
+                new LobbyMapOption { mapName = "Office", sceneBuildIndex = 2 }
+            }
+        },
+        new LobbyGameModeOption
+        {
+            gameModeName = "Race",
+            maps = new[]
+            {
+                new LobbyMapOption { mapName = "Mario", sceneBuildIndex = 3 },
+                new LobbyMapOption { mapName = "Ancient", sceneBuildIndex = 4 }
+            }
+        }
+    };
 
     [Header("Panels")]
     [SerializeField] private LobbyPanelsUI panelsUI;
@@ -37,8 +79,13 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
     [Header("Room Panel")]
     [SerializeField] private TMP_InputField roomNameInput;
     [SerializeField] private TMP_Dropdown maxPlayersDropdown;
+    [SerializeField] private Toggle hideRoomFromLobbyToggle;
+    [SerializeField] private TMP_Dropdown gameModeDropdown;
+    [SerializeField] private TMP_Dropdown mapDropdown;
+    [SerializeField] private Button findRoomButton;
     [SerializeField] private Button createRoomButton;
     [SerializeField] private Button leaveFromRoomsButton;
+    [SerializeField] private TMP_Text roomPanelStatusText;
 
     [Header("Waiting Panel")]
     [SerializeField] private Button leaveFromWaitingButton;
@@ -66,10 +113,19 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
     private string currentLobbyName;
     private string currentRoomName;
+    private string currentGameModeName;
+    private string currentMapName;
+    private int currentGameSceneBuildIndex;
 
     private bool isBusy;
     private bool isInLobby;
     private bool isInRoom;
+
+    private readonly List<SessionInfo> cachedSessionList = new List<SessionInfo>();
+    private bool hasAppliedRoomFilter;
+    private int appliedFilterMaxPlayers;
+    private string appliedFilterGameMode;
+    private string appliedFilterMap;
 
     private void Awake()
     {
@@ -88,6 +144,8 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
         joinLobbyButton.onClick.AddListener(JoinLobby);
         backFromLobbyButton.onClick.AddListener(BackFromLobbyPanel);
 
+        if (findRoomButton != null)
+            findRoomButton.onClick.AddListener(FindRoom);
         createRoomButton.onClick.AddListener(CreateRoom);
         leaveFromRoomsButton.onClick.AddListener(LeaveAll);
 
@@ -97,10 +155,23 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
         playerNameInput.onValueChanged.AddListener(_ => RefreshButtons());
         lobbyNameInput.onValueChanged.AddListener(_ => RefreshButtons());
         roomNameInput.onValueChanged.AddListener(_ => RefreshButtons());
-        maxPlayersDropdown.onValueChanged.AddListener(_ => RefreshButtons());
+        maxPlayersDropdown.onValueChanged.AddListener(OnMaxPlayersChanged);
+        
+        if (hideRoomFromLobbyToggle != null)
+            hideRoomFromLobbyToggle.onValueChanged.AddListener(OnHideRoomFromLobbyChanged);
+
+        if (gameModeDropdown != null)
+            gameModeDropdown.onValueChanged.AddListener(OnCreateGameModeChanged);
+
+        if (mapDropdown != null)
+            mapDropdown.onValueChanged.AddListener(OnCreateMapChanged);
+
+        InitializeGameModeAndMapDropdowns();
 
         ClearRoomList();
         ClearPlayersList();
+
+        currentGameSceneBuildIndex = gameSceneBuildIndex;
 
         SetStatus("Ready");
         SetLobbyText("Lobby: Not joined");
@@ -132,6 +203,9 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
         if (backFromLobbyButton != null)
             backFromLobbyButton.onClick.RemoveListener(BackFromLobbyPanel);
 
+        if (findRoomButton != null)
+            findRoomButton.onClick.RemoveListener(FindRoom);
+
         if (createRoomButton != null)
             createRoomButton.onClick.RemoveListener(CreateRoom);
 
@@ -143,6 +217,18 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
         if (startGameButton != null)
             startGameButton.onClick.RemoveListener(StartGameForAll);
+
+        if (maxPlayersDropdown != null)
+            maxPlayersDropdown.onValueChanged.RemoveListener(OnMaxPlayersChanged);
+
+        if (hideRoomFromLobbyToggle != null)
+            hideRoomFromLobbyToggle.onValueChanged.RemoveListener(OnHideRoomFromLobbyChanged);
+
+        if (gameModeDropdown != null)
+            gameModeDropdown.onValueChanged.RemoveListener(OnCreateGameModeChanged);
+
+        if (mapDropdown != null)
+            mapDropdown.onValueChanged.RemoveListener(OnCreateMapChanged);
     }
 
     private void CreateRunner()
@@ -164,6 +250,215 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
             sceneManager = runner.gameObject.AddComponent<NetworkSceneManagerDefault>();
 
         runner.AddCallbacks(this);
+    }
+
+    private void InitializeGameModeAndMapDropdowns()
+    {
+        PopulateGameModeDropdown(gameModeDropdown);
+        PopulateCreateMapDropdown();
+    }
+
+    private void PopulateGameModeDropdown(TMP_Dropdown dropdown)
+    {
+        if (dropdown == null)
+            return;
+
+        List<string> options = new List<string>();
+
+        if (gameModeOptions != null)
+        {
+            foreach (LobbyGameModeOption gameModeOption in gameModeOptions)
+            {
+                if (gameModeOption == null)
+                    continue;
+
+                string gameModeName = NormalizeOptionName(gameModeOption.gameModeName);
+
+                if (!string.IsNullOrWhiteSpace(gameModeName))
+                    options.Add(gameModeName);
+            }
+        }
+
+        SetDropdownOptions(dropdown, options, 0);
+    }
+
+    private void PopulateCreateMapDropdown()
+    {
+        if (mapDropdown == null)
+            return;
+
+        List<string> options = new List<string>();
+
+        if (TryGetSelectedCreateGameMode(out LobbyGameModeOption gameModeOption) &&
+            gameModeOption.maps != null)
+        {
+            foreach (LobbyMapOption mapOption in gameModeOption.maps)
+            {
+                if (mapOption == null)
+                    continue;
+
+                string mapName = NormalizeOptionName(mapOption.mapName);
+
+                if (!string.IsNullOrWhiteSpace(mapName))
+                    options.Add(mapName);
+            }
+        }
+
+        SetDropdownOptions(mapDropdown, options, 0);
+    }
+
+    private void SetDropdownOptions(TMP_Dropdown dropdown, List<string> options, int selectedIndex)
+    {
+        if (dropdown == null)
+            return;
+
+        dropdown.ClearOptions();
+
+        if (options != null && options.Count > 0)
+            dropdown.AddOptions(options);
+
+        int clampedIndex = options == null || options.Count == 0
+            ? 0
+            : Mathf.Clamp(selectedIndex, 0, options.Count - 1);
+
+        dropdown.SetValueWithoutNotify(clampedIndex);
+        dropdown.RefreshShownValue();
+    }
+
+    private void OnCreateGameModeChanged(int _)
+    {
+        ClearAppliedRoomFilter();
+        PopulateCreateMapDropdown();
+        ShowAllAvailableRooms();
+        RefreshButtons();
+    }
+
+    private void OnMaxPlayersChanged(int _)
+    {
+        ClearAppliedRoomFilter();
+        ShowAllAvailableRooms();
+        RefreshButtons();
+    }
+
+    private void OnCreateMapChanged(int _)
+    {
+        ClearAppliedRoomFilter();
+        ShowAllAvailableRooms();
+        RefreshButtons();
+    }
+
+    private void OnHideRoomFromLobbyChanged(bool _)
+    {
+        RefreshButtons();
+    }
+
+    private bool TryGetSelectedCreateGameMode(out LobbyGameModeOption gameModeOption)
+    {
+        gameModeOption = null;
+
+        if (gameModeOptions == null || gameModeOptions.Length == 0)
+            return false;
+
+        int selectedIndex = gameModeDropdown != null ? gameModeDropdown.value : 0;
+        selectedIndex = Mathf.Clamp(selectedIndex, 0, gameModeOptions.Length - 1);
+
+        gameModeOption = gameModeOptions[selectedIndex];
+
+        return gameModeOption != null &&
+               !string.IsNullOrWhiteSpace(NormalizeOptionName(gameModeOption.gameModeName));
+    }
+
+    private bool TryGetSelectedCreateMap(LobbyGameModeOption gameModeOption, out LobbyMapOption mapOption)
+    {
+        mapOption = null;
+
+        if (gameModeOption == null || gameModeOption.maps == null || gameModeOption.maps.Length == 0)
+            return false;
+
+        int selectedIndex = mapDropdown != null ? mapDropdown.value : 0;
+        selectedIndex = Mathf.Clamp(selectedIndex, 0, gameModeOption.maps.Length - 1);
+
+        mapOption = gameModeOption.maps[selectedIndex];
+
+        return mapOption != null &&
+               !string.IsNullOrWhiteSpace(NormalizeOptionName(mapOption.mapName)) &&
+               mapOption.sceneBuildIndex >= 0;
+    }
+
+    private Dictionary<string, SessionProperty> CreateRoomProperties(
+        LobbyGameModeOption gameModeOption,
+        LobbyMapOption mapOption)
+    {
+        return new Dictionary<string, SessionProperty>
+        {
+            { GameModeSessionPropertyKey, NormalizeOptionName(gameModeOption.gameModeName) },
+            { MapSessionPropertyKey, NormalizeOptionName(mapOption.mapName) },
+            { SceneBuildIndexSessionPropertyKey, mapOption.sceneBuildIndex }
+        };
+    }
+
+    private void CacheCurrentSessionMetadata(SessionInfo session)
+    {
+        currentGameModeName = GetSessionPropertyText(session, GameModeSessionPropertyKey, string.Empty);
+        currentMapName = GetSessionPropertyText(session, MapSessionPropertyKey, string.Empty);
+        currentGameSceneBuildIndex = GetSessionPropertyInt(session, SceneBuildIndexSessionPropertyKey, gameSceneBuildIndex);
+    }
+
+    public static string GetSessionPropertyText(SessionInfo session, string propertyKey, string fallback)
+    {
+        if (session == null ||
+            session.Properties == null ||
+            string.IsNullOrWhiteSpace(propertyKey) ||
+            !session.Properties.TryGetValue(propertyKey, out SessionProperty property))
+        {
+            return fallback;
+        }
+
+        object propertyValue = property.PropertyValue;
+
+        if (propertyValue == null)
+            return fallback;
+
+        string text = propertyValue.ToString();
+
+        return string.IsNullOrWhiteSpace(text) ? fallback : text.Trim();
+    }
+
+    private static int GetSessionPropertyInt(SessionInfo session, string propertyKey, int fallback)
+    {
+        if (session == null ||
+            session.Properties == null ||
+            string.IsNullOrWhiteSpace(propertyKey) ||
+            !session.Properties.TryGetValue(propertyKey, out SessionProperty property))
+        {
+            return fallback;
+        }
+
+        object propertyValue = property.PropertyValue;
+
+        if (propertyValue is int intValue)
+            return intValue;
+
+        if (propertyValue != null && int.TryParse(propertyValue.ToString(), out int parsedValue))
+            return parsedValue;
+
+        return fallback;
+    }
+
+    private string GetDropdownSelectedText(TMP_Dropdown dropdown)
+    {
+        if (dropdown == null || dropdown.options == null || dropdown.options.Count == 0)
+            return string.Empty;
+
+        int selectedIndex = Mathf.Clamp(dropdown.value, 0, dropdown.options.Count - 1);
+        TMP_Dropdown.OptionData selectedOption = dropdown.options[selectedIndex];
+
+        return selectedOption == null ? string.Empty : NormalizeOptionName(selectedOption.text);
+    }
+
+    private string NormalizeOptionName(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
     }
 
     private void OpenPlayerNamePanel()
@@ -263,22 +558,28 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
             currentLobbyName = lobbyName;
             isInLobby = true;
             isInRoom = false;
+            ResetCurrentRoomMetadata();
 
             SetLobbyText("Lobby: " + currentLobbyName);
             SetRoomText("Room: Not joined");
 
             ClearRoomList();
             ClearPlayersList();
+            cachedSessionList.Clear();
+            ClearAppliedRoomFilter();
 
             panelsUI.ShowRooms();
 
             SetStatus("Joined lobby successfully");
+            SetRoomSearchStatus("Waiting for room list...");
         }
         else
         {
             currentLobbyName = string.Empty;
             isInLobby = false;
             isInRoom = false;
+            ResetCurrentRoomMetadata();
+            ClearAppliedRoomFilter();
 
             SetStatus("Failed to join lobby: " + result.ShutdownReason);
         }
@@ -321,6 +622,22 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
             return;
         }
 
+        if (!TryGetSelectedCreateGameMode(out LobbyGameModeOption selectedGameMode))
+        {
+            SetStatus("Select game mode");
+            RefreshButtons();
+            return;
+        }
+
+        if (!TryGetSelectedCreateMap(selectedGameMode, out LobbyMapOption selectedMap))
+        {
+            SetStatus("Select map");
+            RefreshButtons();
+            return;
+        }
+
+        bool hideRoomFromLobby = hideRoomFromLobbyToggle != null && hideRoomFromLobbyToggle.isOn;
+
         isBusy = true;
         RefreshButtons();
 
@@ -332,6 +649,9 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
             SessionName = roomName,
             PlayerCount = maxPlayers,
             CustomLobbyName = currentLobbyName,
+            SessionProperties = CreateRoomProperties(selectedGameMode, selectedMap),
+            IsOpen = true,
+            IsVisible = !hideRoomFromLobby,
             SceneManager = sceneManager
         });
 
@@ -340,11 +660,16 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
         if (result.Ok)
         {
             currentRoomName = roomName;
+            currentGameModeName = NormalizeOptionName(selectedGameMode.gameModeName);
+            currentMapName = NormalizeOptionName(selectedMap.mapName);
+            currentGameSceneBuildIndex = selectedMap.sceneBuildIndex;
             isInRoom = true;
 
-            SetRoomText("Room: " + currentRoomName);
+            SetRoomText(GetCurrentRoomText());
 
             ClearRoomList();
+            cachedSessionList.Clear();
+            ClearAppliedRoomFilter();
 
             panelsUI.ShowWaiting();
 
@@ -356,6 +681,7 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
         else
         {
             currentRoomName = string.Empty;
+            ResetCurrentRoomMetadata();
             isInRoom = false;
 
             SetStatus("Failed to create room: " + result.ShutdownReason);
@@ -415,11 +741,14 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
         if (result.Ok)
         {
             currentRoomName = session.Name;
+            CacheCurrentSessionMetadata(session);
             isInRoom = true;
 
-            SetRoomText("Room: " + currentRoomName);
+            SetRoomText(GetCurrentRoomText());
 
             ClearRoomList();
+            cachedSessionList.Clear();
+            ClearAppliedRoomFilter();
 
             panelsUI.ShowWaiting();
 
@@ -431,6 +760,7 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
         else
         {
             currentRoomName = string.Empty;
+            ResetCurrentRoomMetadata();
             isInRoom = false;
 
             SetStatus("Failed to join room: " + result.ShutdownReason);
@@ -500,7 +830,29 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
         SetStatus("Loading game scene...");
 
-        runner.LoadScene(SceneRef.FromIndex(gameSceneBuildIndex), LoadSceneMode.Single);
+        CloseSessionForGameStart();
+
+        int sceneBuildIndex = currentGameSceneBuildIndex >= 0
+            ? currentGameSceneBuildIndex
+            : gameSceneBuildIndex;
+
+        runner.LoadScene(SceneRef.FromIndex(sceneBuildIndex), LoadSceneMode.Single);
+    }
+
+    private void CloseSessionForGameStart()
+    {
+        if (runner == null || runner.SessionInfo == null)
+            return;
+
+        try
+        {
+            runner.SessionInfo.IsOpen = false;
+            runner.SessionInfo.IsVisible = false;
+        }
+        catch (Exception exception)
+        {
+            Debug.LogWarning("Failed to close session before game start: " + exception.Message);
+        }
     }
 
     private async void LeaveAll()
@@ -518,9 +870,12 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
         currentLobbyName = string.Empty;
         currentRoomName = string.Empty;
+        ResetCurrentRoomMetadata();
 
         ClearRoomList();
         ClearPlayersList();
+        cachedSessionList.Clear();
+        ClearAppliedRoomFilter();
 
         SetLobbyText("Lobby: Not joined");
         SetRoomText("Room: Not joined");
@@ -557,6 +912,13 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 #endif
     }
 
+    private void ResetCurrentRoomMetadata()
+    {
+        currentGameModeName = string.Empty;
+        currentMapName = string.Empty;
+        currentGameSceneBuildIndex = gameSceneBuildIndex;
+    }
+
     private bool TryGetMaxPlayers(out int maxPlayers)
     {
         maxPlayers = 0;
@@ -578,66 +940,78 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
     }
 
     private void RefreshButtons()
-{
-    bool playerNameIsValid = playerNameInput != null &&
-                             !string.IsNullOrWhiteSpace(playerNameInput.text);
+    {
+        bool playerNameIsValid = playerNameInput != null &&
+                                 !string.IsNullOrWhiteSpace(playerNameInput.text);
 
-    bool lobbyNameIsValid = lobbyNameInput != null &&
-                            !string.IsNullOrWhiteSpace(lobbyNameInput.text);
+        bool lobbyNameIsValid = lobbyNameInput != null &&
+                                !string.IsNullOrWhiteSpace(lobbyNameInput.text);
 
-    bool roomNameIsValid = roomNameInput != null &&
-                           !string.IsNullOrWhiteSpace(roomNameInput.text);
+        bool roomNameIsValid = roomNameInput != null &&
+                               !string.IsNullOrWhiteSpace(roomNameInput.text);
 
-    bool maxPlayersIsValid = TryGetMaxPlayers(out _);
+        bool maxPlayersIsValid = TryGetMaxPlayers(out _);
+        bool gameModeIsValid = TryGetSelectedCreateGameMode(out LobbyGameModeOption selectedGameMode);
+        bool mapIsValid = gameModeIsValid && TryGetSelectedCreateMap(selectedGameMode, out _);
 
-    if (openLobbyPanelButton != null)
-        openLobbyPanelButton.interactable = !isBusy && !isInLobby && !isInRoom;
+        if (openLobbyPanelButton != null)
+            openLobbyPanelButton.interactable = !isBusy && !isInLobby && !isInRoom;
 
-    if (exitButton != null)
-        exitButton.interactable = !isBusy;
+        if (exitButton != null)
+            exitButton.interactable = !isBusy;
 
-    if (confirmPlayerNameButton != null)
-        confirmPlayerNameButton.interactable = !isBusy &&
-                                               !isInLobby &&
-                                               !isInRoom &&
-                                               playerNameIsValid;
+        if (confirmPlayerNameButton != null)
+            confirmPlayerNameButton.interactable = !isBusy &&
+                                                   !isInLobby &&
+                                                   !isInRoom &&
+                                                   playerNameIsValid;
 
-    if (backFromPlayerNameButton != null)
-        backFromPlayerNameButton.interactable = !isBusy &&
-                                                !isInLobby &&
-                                                !isInRoom;
+        if (backFromPlayerNameButton != null)
+            backFromPlayerNameButton.interactable = !isBusy &&
+                                                    !isInLobby &&
+                                                    !isInRoom;
 
-    if (joinLobbyButton != null)
-        joinLobbyButton.interactable = !isBusy &&
-                                       !isInLobby &&
-                                       !isInRoom &&
-                                       !string.IsNullOrWhiteSpace(localPlayerName) &&
-                                       lobbyNameIsValid;
-
-    if (backFromLobbyButton != null)
-        backFromLobbyButton.interactable = !isBusy &&
+        if (joinLobbyButton != null)
+            joinLobbyButton.interactable = !isBusy &&
                                            !isInLobby &&
-                                           !isInRoom;
+                                           !isInRoom &&
+                                           !string.IsNullOrWhiteSpace(localPlayerName) &&
+                                           lobbyNameIsValid;
 
-    if (createRoomButton != null)
-        createRoomButton.interactable = !isBusy &&
-                                        isInLobby &&
-                                        !isInRoom &&
-                                        roomNameIsValid &&
-                                        maxPlayersIsValid;
+        if (backFromLobbyButton != null)
+            backFromLobbyButton.interactable = !isBusy &&
+                                               !isInLobby &&
+                                               !isInRoom;
 
-    if (leaveFromRoomsButton != null)
-        leaveFromRoomsButton.interactable = !isBusy && isInLobby && !isInRoom;
+        if (createRoomButton != null)
+            createRoomButton.interactable = !isBusy &&
+                                            isInLobby &&
+                                            !isInRoom &&
+                                            roomNameIsValid &&
+                                            maxPlayersIsValid &&
+                                            gameModeIsValid &&
+                                            mapIsValid;
 
-    if (leaveFromWaitingButton != null)
-        leaveFromWaitingButton.interactable = !isBusy && isInRoom;
+        if (findRoomButton != null)
+            findRoomButton.interactable = !isBusy &&
+                                          isInLobby &&
+                                          !isInRoom &&
+                                          maxPlayersIsValid &&
+                                          gameModeIsValid &&
+                                          mapIsValid;
 
-    if (startGameButton != null)
-        startGameButton.interactable = !isBusy &&
-                                       isInRoom &&
-                                       runner != null &&
-                                       runner.IsSharedModeMasterClient;
-}
+        if (leaveFromRoomsButton != null)
+            leaveFromRoomsButton.interactable = !isBusy && isInLobby && !isInRoom;
+
+        if (leaveFromWaitingButton != null)
+            leaveFromWaitingButton.interactable = !isBusy && isInRoom;
+
+        if (startGameButton != null)
+            startGameButton.interactable = !isBusy &&
+                                           isInRoom &&
+                                           runner != null &&
+                                           runner.IsSharedModeMasterClient;
+    }
 
     private void ClearRoomList()
     {
@@ -733,29 +1107,218 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
             roomText.text = message;
     }
 
-    public void OnSessionListUpdated(NetworkRunner callbackRunner, List<SessionInfo> sessionList)
+    private void SetRoomSearchStatus(string message)
+    {
+        Debug.Log(message);
+
+        if (roomPanelStatusText != null)
+        {
+            roomPanelStatusText.text = message;
+            return;
+        }
+
+        if (statusText != null)
+            statusText.text = message;
+    }
+
+    private string GetCurrentRoomText()
+    {
+        string message = "Room: " + currentRoomName;
+
+        if (!string.IsNullOrWhiteSpace(currentGameModeName))
+            message += " | " + currentGameModeName;
+
+        if (!string.IsNullOrWhiteSpace(currentMapName))
+            message += " | " + currentMapName;
+
+        return message;
+    }
+
+    private void FindRoom()
+    {
+        if (isBusy)
+            return;
+
+        if (!isInLobby || isInRoom)
+        {
+            SetRoomSearchStatus("Join lobby first");
+            RefreshButtons();
+            return;
+        }
+
+        if (!TryGetMaxPlayers(out int maxPlayers))
+        {
+            SetRoomSearchStatus("Select max players from 2 to 5");
+            RefreshButtons();
+            return;
+        }
+
+        if (!TryGetSelectedCreateGameMode(out LobbyGameModeOption selectedGameMode))
+        {
+            SetRoomSearchStatus("Select game mode");
+            RefreshButtons();
+            return;
+        }
+
+        if (!TryGetSelectedCreateMap(selectedGameMode, out LobbyMapOption selectedMap))
+        {
+            SetRoomSearchStatus("Select map");
+            RefreshButtons();
+            return;
+        }
+
+        appliedFilterMaxPlayers = maxPlayers;
+        appliedFilterGameMode = NormalizeOptionName(selectedGameMode.gameModeName);
+        appliedFilterMap = NormalizeOptionName(selectedMap.mapName);
+        hasAppliedRoomFilter = true;
+
+        int foundRoomsCount = DrawRoomList(MatchesAppliedRoomFilter);
+
+        if (foundRoomsCount > 0)
+        {
+            SetRoomSearchStatus("Found rooms: " + foundRoomsCount + " | " + GetAppliedRoomFilterText());
+        }
+        else
+        {
+            string filterText = GetAppliedRoomFilterText();
+            ClearAppliedRoomFilter();
+            int availableRoomsCount = DrawRoomList(IsAvailableRoom);
+            SetRoomSearchStatus(
+                "No rooms found for " +
+                filterText +
+                ". Showing all available rooms: " +
+                availableRoomsCount
+            );
+        }
+
+        RefreshButtons();
+    }
+
+    private void RefreshRoomListFromCache()
     {
         if (!isInLobby || isInRoom || panelsUI.CurrentState != LobbyPanelState.Rooms)
             return;
 
+        if (hasAppliedRoomFilter)
+        {
+            int filteredRoomsCount = DrawRoomList(MatchesAppliedRoomFilter);
+
+            if (filteredRoomsCount > 0)
+            {
+                SetRoomSearchStatus("Found rooms: " + filteredRoomsCount + " | " + GetAppliedRoomFilterText());
+                return;
+            }
+
+            string filterText = GetAppliedRoomFilterText();
+            ClearAppliedRoomFilter();
+            int availableRoomsCount = DrawRoomList(IsAvailableRoom);
+            SetRoomSearchStatus("No rooms found for " + filterText + ". Showing all available rooms: " + availableRoomsCount);
+            return;
+        }
+
+        ShowAllAvailableRooms();
+    }
+
+    private void ShowAllAvailableRooms()
+    {
+        if (!isInLobby || isInRoom || panelsUI.CurrentState != LobbyPanelState.Rooms)
+            return;
+
+        int availableRoomsCount = DrawRoomList(IsAvailableRoom);
+
+        SetRoomSearchStatus(availableRoomsCount > 0
+            ? "Showing all available rooms: " + availableRoomsCount
+            : "No available rooms");
+    }
+
+    private int DrawRoomList(Predicate<SessionInfo> roomFilter)
+    {
         ClearRoomList();
 
-        foreach (SessionInfo session in sessionList)
+        int roomsCount = 0;
+
+        foreach (SessionInfo session in cachedSessionList)
         {
-            if (!session.IsVisible)
-                continue;
-
-            if (!session.IsOpen)
-                continue;
-
-            if (session.PlayerCount >= session.MaxPlayers)
+            if (roomFilter != null && !roomFilter(session))
                 continue;
 
             RoomButtonUI roomButton = Instantiate(roomButtonPrefab, roomListContent);
             roomButton.Init(session, JoinRoom);
+            roomsCount++;
         }
 
-        SetStatus("Room list updated");
+        return roomsCount;
+    }
+
+    private bool MatchesAppliedRoomFilter(SessionInfo session)
+    {
+        if (!IsAvailableRoom(session))
+            return false;
+
+        if (session.MaxPlayers != appliedFilterMaxPlayers)
+            return false;
+
+        if (!SessionPropertyEquals(session, GameModeSessionPropertyKey, appliedFilterGameMode))
+            return false;
+
+        if (!SessionPropertyEquals(session, MapSessionPropertyKey, appliedFilterMap))
+            return false;
+
+        return true;
+    }
+
+    private bool IsAvailableRoom(SessionInfo session)
+    {
+        if (session == null)
+            return false;
+
+        if (!session.IsVisible)
+            return false;
+
+        if (!session.IsOpen)
+            return false;
+
+        if (session.PlayerCount >= session.MaxPlayers)
+            return false;
+
+        return true;
+    }
+
+    private bool SessionPropertyEquals(SessionInfo session, string propertyKey, string expectedValue)
+    {
+        string actualValue = GetSessionPropertyText(session, propertyKey, string.Empty);
+
+        return string.Equals(actualValue, expectedValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetAppliedRoomFilterText()
+    {
+        return GetRoomFilterText(appliedFilterMaxPlayers, appliedFilterGameMode, appliedFilterMap);
+    }
+
+    private string GetRoomFilterText(int maxPlayers, string gameModeName, string mapName)
+    {
+        return "Max players: " + maxPlayers +
+               " | Game mode: " + gameModeName +
+               " | Map: " + mapName;
+    }
+
+    private void ClearAppliedRoomFilter()
+    {
+        hasAppliedRoomFilter = false;
+        appliedFilterMaxPlayers = 0;
+        appliedFilterGameMode = string.Empty;
+        appliedFilterMap = string.Empty;
+    }
+
+    public void OnSessionListUpdated(NetworkRunner callbackRunner, List<SessionInfo> sessionList)
+    {
+        cachedSessionList.Clear();
+
+        if (sessionList != null)
+            cachedSessionList.AddRange(sessionList);
+
+        RefreshRoomListFromCache();
     }
 
     public void OnPlayerJoined(NetworkRunner callbackRunner, PlayerRef player)
@@ -787,9 +1350,12 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
         currentLobbyName = string.Empty;
         currentRoomName = string.Empty;
+        ResetCurrentRoomMetadata();
 
         ClearRoomList();
         ClearPlayersList();
+        cachedSessionList.Clear();
+        ClearAppliedRoomFilter();
 
         SetLobbyText("Lobby: Not joined");
         SetRoomText("Room: Not joined");
@@ -818,9 +1384,12 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
         isInLobby = false;
         isInRoom = false;
+        ResetCurrentRoomMetadata();
 
         ClearRoomList();
         ClearPlayersList();
+        cachedSessionList.Clear();
+        ClearAppliedRoomFilter();
 
         if (panelsUI != null)
             panelsUI.ShowMainMenu();

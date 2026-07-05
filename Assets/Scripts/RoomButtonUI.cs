@@ -8,6 +8,8 @@ public class RoomButtonUI : MonoBehaviour
 {
     [SerializeField] private TMP_Text roomNameText;
     [SerializeField] private TMP_Text playersCountText;
+    [SerializeField] private TMP_Text gameModeText;
+    [SerializeField] private TMP_Text mapText;
     [SerializeField] private Button joinButton;
 
     private SessionInfo sessionInfo;
@@ -20,6 +22,28 @@ public class RoomButtonUI : MonoBehaviour
 
         roomNameText.text = session.Name;
         playersCountText.text = $"{session.PlayerCount}/{session.MaxPlayers}";
+
+        if (gameModeText != null)
+        {
+            string gameMode = LobbyManager.GetSessionPropertyText(
+                session,
+                LobbyManager.GameModeSessionPropertyKey,
+                "Unknown"
+            );
+
+            gameModeText.text = "Mode: " + gameMode;
+        }
+
+        if (mapText != null)
+        {
+            string map = LobbyManager.GetSessionPropertyText(
+                session,
+                LobbyManager.MapSessionPropertyKey,
+                "Unknown"
+            );
+
+            mapText.text = "Map: " + map;
+        }
 
         bool canJoin = session.IsOpen && session.PlayerCount < session.MaxPlayers;
 

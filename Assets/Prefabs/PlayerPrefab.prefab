@@ -197,6 +197,8 @@ GameObject:
   - component: {fileID: 7858254157167630170}
   - component: {fileID: 1183385551363767509}
   - component: {fileID: 3116395805332452890}
+  - component: {fileID: 5232251483762433753}
+  - component: {fileID: 8520783395990000366}
   m_Layer: 0
   m_Name: PlayerPrefab
   m_TagString: Untagged
@@ -321,6 +323,7 @@ MonoBehaviour:
   - {fileID: 7858254157167630170}
   - {fileID: 1183385551363767509}
   - {fileID: 3116395805332452890}
+  - {fileID: 5232251483762433753}
   ForceRemoteRenderTimeframe: 0
 --- !u!114 &7858254157167630170
 MonoBehaviour:
@@ -373,6 +376,52 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerBonusNameTag
   nameText: {fileID: 2520396658763134104}
   faceCamera: 1
+--- !u!114 &5232251483762433753
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6897131918027433929}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e4ecdc4bd74843c586ff7f45955a4632, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RacePlayerController
+  movementSettings: {fileID: 11400000, guid: 1e68cbbdf14be1545a332850c1b4ba91, type: 2}
+  startOnTrack: 1
+  _CurrentLap: 0
+  _NextCheckpointIndex: 0
+  _HasFinished:
+    _value: 0
+  _FinishTick: 0
+--- !u!54 &8520783395990000366
+Rigidbody:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6897131918027433929}
+  serializedVersion: 5
+  m_Mass: 1
+  m_LinearDamping: 0
+  m_AngularDamping: 0.05
+  m_CenterOfMass: {x: 0, y: 0, z: 0}
+  m_InertiaTensor: {x: 1, y: 1, z: 1}
+  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ImplicitCom: 1
+  m_ImplicitTensor: 1
+  m_UseGravity: 0
+  m_IsKinematic: 1
+  m_Interpolate: 1
+  m_Constraints: 0
+  m_CollisionDetection: 0
 --- !u!1 &8287487482047393789
 GameObject:
   m_ObjectHideFlags: 0

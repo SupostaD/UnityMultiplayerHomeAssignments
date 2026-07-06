@@ -9,16 +9,15 @@ using UnityEngine.UI;
 
 public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 {
-    [Header("Player")]
-    [SerializeField] private NetworkObject playerPrefab;
+    [Header("Player")] [SerializeField] private NetworkObject playerPrefab;
     [SerializeField] private Transform[] spawnPoints;
 
-    [Header("Character Selection")]
-    [SerializeField] private CharacterSelectionUI characterSelectionUI;
+    [Header("Character Selection")] [SerializeField]
+    private CharacterSelectionUI characterSelectionUI;
+
     [SerializeField] private Color[] characterColors = new Color[10];
 
-    [Header("End Game")]
-    [SerializeField] private Button endGameButton;
+    [Header("End Game")] [SerializeField] private Button endGameButton;
     [SerializeField] private EndGameUI endGameUI;
     [SerializeField] private GamePauseUI gamePauseUI;
     [SerializeField] private GameObject endGamePanel;
@@ -27,9 +26,6 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     [Networked, OnChangedRender(nameof(OnOccupiedCharactersChanged))]
     private int OccupiedCharactersMask { get; set; }
-
-    [Networked]
-    private PlayerRef OriginalHostPlayer { get; set; }
 
     public static GameSceneManager Instance { get; private set; }
 
@@ -40,7 +36,6 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     private NetworkRunner runner;
     private NetworkObject localPlayerObject;
-    private PlayerRef localOriginalHostPlayer = PlayerRef.None;
 
     private bool endGamePanelShown;
     private bool gameEnded;
@@ -67,6 +62,9 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         if (endGameButton != null)
             endGameButton.onClick.RemoveListener(RequestEndGame);
 
+        if (runner != null)
+            runner.RemoveCallbacks(this);
+
         if (Instance == this)
             Instance = null;
     }
@@ -74,17 +72,12 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     public override void Spawned()
     {
         runner = Runner;
-        runner.AddCallbacks(this);
 
-        RememberOriginalHost();
+        if (runner != null)
+            runner.AddCallbacks(this);
 
         if (Object.HasStateAuthority)
-        {
             OccupiedCharactersMask = 0;
-
-            if (OriginalHostPlayer == PlayerRef.None && localOriginalHostPlayer != PlayerRef.None)
-                OriginalHostPlayer = localOriginalHostPlayer;
-        }
 
         HideEndGamePanel();
         RefreshEndGameButton();
@@ -107,7 +100,6 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     private void Update()
     {
         RefreshEndGameButton();
-        CheckOriginalHostStillInGame();
     }
 
     private void RefreshEndGameButton()
@@ -192,89 +184,6 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             endGamePanel.SetActive(false);
     }
 
-    private void RememberOriginalHost()
-    {
-        if (runner == null || localOriginalHostPlayer != PlayerRef.None)
-            return;
-
-        localOriginalHostPlayer = GetCurrentMasterClient();
-
-        if (Object != null &&
-            Object.HasStateAuthority &&
-            OriginalHostPlayer == PlayerRef.None &&
-            localOriginalHostPlayer != PlayerRef.None)
-        {
-            OriginalHostPlayer = localOriginalHostPlayer;
-        }
-    }
-
-    private PlayerRef GetOriginalHostPlayer()
-    {
-        if (OriginalHostPlayer != PlayerRef.None)
-            return OriginalHostPlayer;
-
-        return localOriginalHostPlayer;
-    }
-
-    private PlayerRef GetCurrentMasterClient()
-    {
-        if (runner == null)
-            return PlayerRef.None;
-
-        try
-        {
-            return runner.GetMasterClient();
-        }
-        catch (Exception exception)
-        {
-            Debug.LogWarning("Unable to get current MasterClient: " + exception.Message);
-            return PlayerRef.None;
-        }
-    }
-
-    private void CheckOriginalHostStillInGame()
-    {
-        if (runner == null || gameEnded || isLeavingGameIntentionally)
-            return;
-
-        RememberOriginalHost();
-
-        PlayerRef originalHost = GetOriginalHostPlayer();
-
-        if (originalHost == PlayerRef.None)
-            return;
-
-        if (!IsPlayerActive(originalHost))
-        {
-            EndGameBecauseHostLeft();
-            return;
-        }
-
-        PlayerRef currentMasterClient = GetCurrentMasterClient();
-
-        if (currentMasterClient != PlayerRef.None && currentMasterClient != originalHost)
-            EndGameBecauseHostLeft();
-    }
-
-    private bool IsPlayerActive(PlayerRef player)
-    {
-        if (runner == null)
-            return false;
-
-        foreach (PlayerRef activePlayer in runner.ActivePlayers)
-        {
-            if (activePlayer == player)
-                return true;
-        }
-
-        return false;
-    }
-
-    private void EndGameBecauseHostLeft()
-    {
-        ShowEndGamePanel("Host left the game.\nGame is over.");
-    }
-
     public async void LeaveCurrentGame()
     {
         if (isLeavingGameIntentionally)
@@ -292,17 +201,6 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
             if (runnerToShutdown != null)
             {
-                PlayerRef originalHost = GetOriginalHostPlayer();
-                bool localPlayerIsOriginalHost =
-                    originalHost != PlayerRef.None &&
-                    runnerToShutdown.LocalPlayer == originalHost;
-
-                if (localPlayerIsOriginalHost && !gameEnded)
-                {
-                    RPC_ShowEndGamePanel("Host left the game.\nGame is over.");
-                    await Task.Delay(250);
-                }
-
                 runnerToShutdown.RemoveCallbacks(this);
 
                 Task shutdownTask = runnerToShutdown.Shutdown();
@@ -354,10 +252,26 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             return;
         }
 
+        if (runner == null)
+            runner = Runner;
+
         if (localPlayerObject != null)
         {
             characterSelectionUI?.SetStatus("You already spawned");
             return;
+        }
+
+        if (runner != null)
+        {
+            NetworkObject currentPlayerObject = runner.GetPlayerObject(runner.LocalPlayer);
+
+            if (currentPlayerObject != null &&
+                currentPlayerObject.GetComponent<RacePlayerController>() != null)
+            {
+                localPlayerObject = currentPlayerObject;
+                characterSelectionUI?.SetStatus("You already spawned");
+                return;
+            }
         }
 
         characterSelectionUI?.SetStatus("Requesting character...");
@@ -390,14 +304,21 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         characterOwners[characterIndex] = requestingPlayer;
         OccupiedCharactersMask |= 1 << characterIndex;
 
-        Vector3 spawnPosition = GetSpawnPosition(characterIndex);
-        Quaternion spawnRotation = GetSpawnRotation(characterIndex);
+        int spawnIndex = GetSpawnIndexForCharacter(characterIndex);
+
+        Debug.Log(
+            "Approved character " +
+            characterIndex +
+            " for player " +
+            requestingPlayer +
+            " using spawn index " +
+            spawnIndex
+        );
 
         RPC_CharacterApproved(
             requestingPlayer,
             characterIndex,
-            spawnPosition,
-            spawnRotation.eulerAngles.y
+            spawnIndex
         );
     }
 
@@ -405,16 +326,18 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     private void RPC_CharacterApproved(
         [RpcTarget] PlayerRef targetPlayer,
         int characterIndex,
-        Vector3 spawnPosition,
-        float spawnYRotation)
+        int spawnIndex)
     {
         if (runner == null)
             runner = Runner;
 
+        if (runner == null)
+            return;
+
         if (runner.LocalPlayer != targetPlayer)
             return;
 
-        SpawnLocalPlayer(characterIndex, spawnPosition, spawnYRotation);
+        SpawnLocalPlayer(characterIndex, spawnIndex);
     }
 
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
@@ -425,6 +348,9 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         if (runner == null)
             runner = Runner;
 
+        if (runner == null)
+            return;
+
         if (runner.LocalPlayer != targetPlayer)
             return;
 
@@ -432,10 +358,16 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         characterSelectionUI?.Show();
     }
 
-    private void SpawnLocalPlayer(int characterIndex, Vector3 spawnPosition, float spawnYRotation)
+    private void SpawnLocalPlayer(int characterIndex, int spawnIndex)
     {
         if (runner == null)
             runner = Runner;
+
+        if (runner == null)
+        {
+            Debug.LogError("Runner is missing.");
+            return;
+        }
 
         if (playerPrefab == null)
         {
@@ -446,13 +378,50 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         if (localPlayerObject != null)
             return;
 
-        Quaternion spawnRotation = Quaternion.Euler(0f, spawnYRotation, 0f);
+        NetworkObject currentPlayerObject = runner.GetPlayerObject(runner.LocalPlayer);
+
+        if (currentPlayerObject != null &&
+            currentPlayerObject.GetComponent<RacePlayerController>() != null)
+        {
+            localPlayerObject = currentPlayerObject;
+            characterSelectionUI?.Hide();
+            return;
+        }
+
+        Vector3 spawnPosition = GetSpawnPositionByIndex(spawnIndex);
+        Quaternion spawnRotation = GetSpawnRotationByIndex(spawnIndex);
+
+        Debug.Log(
+            "Spawning local player " +
+            runner.LocalPlayer +
+            " | character " +
+            characterIndex +
+            " | spawn index " +
+            spawnIndex +
+            " | position " +
+            spawnPosition +
+            " | rotation " +
+            spawnRotation.eulerAngles
+        );
 
         localPlayerObject = runner.Spawn(
             playerPrefab,
             spawnPosition,
             spawnRotation,
             runner.LocalPlayer
+        );
+
+        if (localPlayerObject == null)
+        {
+            Debug.LogError("Runner.Spawn returned null.");
+            return;
+        }
+
+        localPlayerObject.transform.SetPositionAndRotation(spawnPosition, spawnRotation);
+
+        Debug.Log(
+            "Player spawned. Actual position after force set: " +
+            localPlayerObject.transform.position
         );
 
         NetworkPlayerCharacter playerCharacter =
@@ -487,21 +456,59 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         return characterIndex >= 0 && characterIndex < MaxCharacters;
     }
 
-    private Vector3 GetSpawnPosition(int characterIndex)
+    private int GetSpawnIndexForCharacter(int characterIndex)
     {
         if (spawnPoints == null || spawnPoints.Length == 0)
-            return Vector3.zero;
+        {
+            Debug.LogError("SpawnPoints are not assigned on GameSceneManager.");
+            return 0;
+        }
 
-        int spawnIndex = characterIndex % spawnPoints.Length;
+        return Mathf.Abs(characterIndex) % spawnPoints.Length;
+    }
+
+    private Vector3 GetSpawnPositionByIndex(int spawnIndex)
+    {
+        if (spawnPoints == null)
+        {
+            Debug.LogError("SpawnPoints array is NULL on local GameSceneManager.");
+            return Vector3.zero;
+        }
+
+        if (spawnPoints.Length == 0)
+        {
+            Debug.LogError("SpawnPoints array is EMPTY on local GameSceneManager.");
+            return Vector3.zero;
+        }
+
+        spawnIndex = Mathf.Clamp(spawnIndex, 0, spawnPoints.Length - 1);
+
+        if (spawnPoints[spawnIndex] == null)
+        {
+            Debug.LogError("Spawn point " + spawnIndex + " is NULL.");
+            return Vector3.zero;
+        }
+
+        Debug.Log(
+            "Using local spawn point " +
+            spawnIndex +
+            " at position " +
+            spawnPoints[spawnIndex].position
+        );
+
         return spawnPoints[spawnIndex].position;
     }
 
-    private Quaternion GetSpawnRotation(int characterIndex)
+    private Quaternion GetSpawnRotationByIndex(int spawnIndex)
     {
         if (spawnPoints == null || spawnPoints.Length == 0)
             return Quaternion.identity;
 
-        int spawnIndex = characterIndex % spawnPoints.Length;
+        spawnIndex = Mathf.Clamp(spawnIndex, 0, spawnPoints.Length - 1);
+
+        if (spawnPoints[spawnIndex] == null)
+            return Quaternion.identity;
+
         return spawnPoints[spawnIndex].rotation;
     }
 
@@ -512,14 +519,6 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     public void OnPlayerLeft(NetworkRunner callbackRunner, PlayerRef player)
     {
-        PlayerRef originalHost = GetOriginalHostPlayer();
-        bool originalHostLeft =
-            originalHost != PlayerRef.None &&
-            player == originalHost;
-
-        if (originalHostLeft && !isLeavingGameIntentionally)
-            EndGameBecauseHostLeft();
-
         if (!Object.HasStateAuthority)
             return;
 
@@ -545,16 +544,20 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     public void OnShutdown(NetworkRunner callbackRunner, ShutdownReason shutdownReason) { }
     public void OnConnectedToServer(NetworkRunner callbackRunner) { }
     public void OnDisconnectedFromServer(NetworkRunner callbackRunner, NetDisconnectReason reason) { }
-    public void OnConnectRequest(NetworkRunner callbackRunner, NetworkRunnerCallbackArgs.ConnectRequest request, byte[] token) { }
+    public void OnConnectRequest(NetworkRunner callbackRunner, NetworkRunnerCallbackArgs.ConnectRequest request,
+        byte[] token) { }
     public void OnConnectFailed(NetworkRunner callbackRunner, NetAddress remoteAddress, NetConnectFailedReason reason) { }
     public void OnUserSimulationMessage(NetworkRunner callbackRunner, SimulationMessagePtr message) { }
-    public void OnSessionListUpdated(NetworkRunner callbackRunner, System.Collections.Generic.List<SessionInfo> sessionList) { }
-    public void OnCustomAuthenticationResponse(NetworkRunner callbackRunner, System.Collections.Generic.Dictionary<string, object> data) { }
+    public void OnSessionListUpdated(NetworkRunner callbackRunner,
+        System.Collections.Generic.List<SessionInfo> sessionList) { }
+    public void OnCustomAuthenticationResponse(NetworkRunner callbackRunner,
+        System.Collections.Generic.Dictionary<string, object> data) { }
     public void OnHostMigration(NetworkRunner callbackRunner, HostMigrationToken hostMigrationToken) { }
     public void OnSceneLoadDone(NetworkRunner callbackRunner) { }
     public void OnSceneLoadStart(NetworkRunner callbackRunner) { }
     public void OnObjectEnterAOI(NetworkRunner callbackRunner, NetworkObject obj, PlayerRef player) { }
     public void OnObjectExitAOI(NetworkRunner callbackRunner, NetworkObject obj, PlayerRef player) { }
-    public void OnReliableDataReceived(NetworkRunner callbackRunner, PlayerRef player, ReliableKey key, ArraySegment<byte> data) { }
+    public void OnReliableDataReceived(NetworkRunner callbackRunner, PlayerRef player, ReliableKey key,
+        ArraySegment<byte> data) { }
     public void OnReliableDataProgress(NetworkRunner callbackRunner, PlayerRef player, ReliableKey key, float progress) { }
 }

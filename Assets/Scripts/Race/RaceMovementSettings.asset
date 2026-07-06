@@ -24,11 +24,11 @@ MonoBehaviour:
   offTrackSpeedMultiplier: 0.65
   groundMask:
     serializedVersion: 2
-    m_Bits: 64
-  groundCheckHeight: 0.75
-  groundCheckDistance: 1.5
-  groundHeightOffset: 0
-  groundSnapSpeed: 20
+    m_Bits: 4294967295
+  groundCheckHeight: 2
+  groundCheckDistance: 10
+  groundHeightOffset: 0.5
+  groundSnapSpeed: 50
   gravity: 25
   airControlMultiplier: 0.35
   alignToGround: 1

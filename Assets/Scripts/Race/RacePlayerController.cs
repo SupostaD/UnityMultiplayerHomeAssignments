@@ -1,3 +1,4 @@
+using System.Collections;
 using Fusion;
 using UnityEngine;
 
@@ -15,11 +16,34 @@ public class RacePlayerController : NetworkBehaviour
     [Header("Runtime")]
     [SerializeField] private bool startOnTrack = true;
 
+    [Header("Trap / Projectile")]
+    [SerializeField] private NetworkObject trapPrefab;
+    [SerializeField] private Transform trapSpawnPoint;
+    [SerializeField, Min(0f)] private float trapSpawnDistanceBehindPlayer = 2f;
+    [SerializeField, Min(0f)] private float trapUseCooldownSeconds = 0.35f;
+    [SerializeField, Min(0f)] private float trapHitValidationDistance = 3.5f;
+    [SerializeField, Min(0f)] private float trapStunSeconds = 1.25f;
+    [SerializeField] private bool startWithTrap;
+    
+    [Header("Local Hit Feedback")]
+    [SerializeField] private GameObject hitVisualEffectPrefab;
+    [SerializeField] private AudioSource hitAudioSource;
+    [SerializeField] private Renderer[] hitFlashRenderers;
+    [SerializeField] private Color hitFlashColor = Color.red;
+    [SerializeField, Min(0f)] private float hitFlashSeconds = 0.15f;
+    
     [Networked] public int CurrentLap { get; private set; }
     [Networked] public int NextCheckpointIndex { get; private set; }
     [Networked] public NetworkBool HasFinished { get; private set; }
     [Networked] public int FinishTick { get; private set; }
+    [Networked] public NetworkBool HasTrap { get; private set; }
+    [Networked] public int ReceivedTrapHits { get; private set; }
+    
+    [Networked, OnChangedRender(nameof(OnTrapHitCounterChanged))]
+    public int TrapHitCounter { get; private set; }
     [Networked] private float CurrentSpeed { get; set; }
+    [Networked] private TickTimer TrapUseCooldown { get; set; }
+    [Networked] private TickTimer StunTimer { get; set; }
 
     private bool isOnTrack;
     private bool isGrounded;
@@ -27,9 +51,13 @@ public class RacePlayerController : NetworkBehaviour
     private Vector3 groundNormal = Vector3.up;
     private Rigidbody cachedRigidbody;
     private Collider cachedCollider;
+    private NetworkButtons previousButtons;
+    private Coroutine hitFlashRoutine;
+    private int requiredLoopResult;
 
     public float Speed => CurrentSpeed;
     public bool IsGrounded => isGrounded;
+    public bool IsStunned => Runner && !StunTimer.ExpiredOrNotRunning(Runner);
 
     private void Awake()
     {
@@ -45,8 +73,32 @@ public class RacePlayerController : NetworkBehaviour
     {
         isOnTrack = startOnTrack;
 
+        Debug.Log(
+            "RacePlayerController Spawned | Root position: " +
+            transform.position +
+            " | Has StateAuthority: " +
+            Object.HasStateAuthority +
+            " | Has InputAuthority: " +
+            Object.HasInputAuthority
+        );
+
+        Transform visuals = transform.Find("Visuals");
+
+        if (visuals != null)
+        {
+            Debug.Log(
+                "Visuals local position: " +
+                visuals.localPosition +
+                " | Visuals world position: " +
+                visuals.position
+            );
+        }
+
         if (Object.HasStateAuthority)
+        {
             ResetRaceProgress();
+            HasTrap = startWithTrap;
+        }
     }
 
     public override void FixedUpdateNetwork()
@@ -59,6 +111,12 @@ public class RacePlayerController : NetworkBehaviour
 
         UpdateGrounding(settings, deltaTime);
 
+        if (!GetInput(out RaceInputData input))
+            input = default;
+
+        HandleTrapInput(input);
+        previousButtons = input.Buttons;
+        
         if (!CanMove())
         {
             CurrentSpeed = Mathf.MoveTowards(
@@ -69,9 +127,6 @@ public class RacePlayerController : NetworkBehaviour
             return;
         }
 
-        if (!GetInput(out RaceInputData input))
-            input = default;
-
         Move(input, settings, deltaTime);
     }
 
@@ -80,9 +135,67 @@ public class RacePlayerController : NetworkBehaviour
         isOnTrack = value;
     }
 
+    public bool TryGrantTrap()
+    {
+        if (!Object.HasStateAuthority)
+            return false;
+
+        if (HasTrap)
+            return false;
+
+        HasTrap = true;
+        return true;
+    }
+    
+    public bool TryReceiveTrapHit(PlayerRef trapOwner, Vector3 trapPosition)
+    {
+        if (!CanAcceptTrapHit(trapOwner, trapPosition))
+            return false;
+
+        RPC_RequestTrapHit(trapOwner, trapPosition);
+        return true;
+    }
+    
+    [Rpc(RpcSources.StateAuthority, RpcTargets.StateAuthority)]
+    private void RPC_RequestTrapHit(PlayerRef trapOwner, Vector3 trapPosition, RpcInfo info = default)
+    {
+        if (!CanAcceptTrapHit(trapOwner, trapPosition))
+            return;
+
+        ApplyTrapHit(trapOwner);
+    }
+
+    private bool CanAcceptTrapHit(PlayerRef trapOwner, Vector3 trapPosition)
+    {
+        if (!Object.HasStateAuthority)
+            return false;
+
+        if (trapOwner == Object.InputAuthority)
+            return false;
+
+        if (HasFinished)
+            return false;
+
+        if (RaceGameManager.Instance && !RaceGameManager.Instance.IsRaceInProgress)
+            return false;
+
+        float maxDistance = Mathf.Max(0.1f, trapHitValidationDistance);
+        float sqrDistance = (transform.position - trapPosition).sqrMagnitude;
+
+        return sqrDistance <= maxDistance * maxDistance;
+    }
+
+    private void ApplyTrapHit(PlayerRef trapOwner)
+    {
+        ReceivedTrapHits++;
+        TrapHitCounter++;
+        CurrentSpeed = 0f;
+        StunTimer = TickTimer.CreateFromSeconds(Runner, Mathf.Max(0.05f, trapStunSeconds));
+    }
+    
     public void ReachedCheckpoint(RaceCheckpoint checkpoint)
     {
-        if (checkpoint == null)
+        if (!checkpoint)
             return;
 
         if (!Object.HasStateAuthority)
@@ -90,7 +203,7 @@ public class RacePlayerController : NetworkBehaviour
 
         RaceGameManager raceGameManager = RaceGameManager.Instance;
 
-        if (raceGameManager == null || !raceGameManager.IsRaceInProgress)
+        if (!raceGameManager || !raceGameManager.IsRaceInProgress)
             return;
 
         if (HasFinished)
@@ -130,6 +243,10 @@ public class RacePlayerController : NetworkBehaviour
         HasFinished = false;
         FinishTick = 0;
         CurrentSpeed = 0f;
+        ReceivedTrapHits = 0;
+        TrapHitCounter = 0;
+        StunTimer = default;
+        TrapUseCooldown = default;
 
         int checkpointCount = RaceGameManager.Instance != null
             ? RaceGameManager.Instance.CheckpointCount
@@ -145,8 +262,73 @@ public class RacePlayerController : NetworkBehaviour
 
         if (HasFinished)
             return false;
+        
+        if (IsStunned)
+            return false;
 
-        return RaceGameManager.Instance != null && RaceGameManager.Instance.CanPlayersMove;
+        return RaceGameManager.Instance && RaceGameManager.Instance.CanPlayersMove;
+    }
+    
+    private void HandleTrapInput(RaceInputData input)
+    {
+        bool useTrapPressed = input.Buttons.WasPressed(previousButtons, RaceInputButton.UseTrap);
+
+        if (!useTrapPressed)
+            return;
+
+        TryUseTrap();
+    }
+    
+    private bool TryUseTrap()
+    {
+        if (!HasTrap)
+            return false;
+
+        if (trapPrefab == null)
+            return false;
+
+        if (RaceGameManager.Instance != null && !RaceGameManager.Instance.IsRaceInProgress)
+            return false;
+
+        if (!TrapUseCooldown.ExpiredOrNotRunning(Runner))
+            return false;
+
+        Vector3 spawnPosition = GetTrapSpawnPosition();
+        Quaternion spawnRotation = trapSpawnPoint != null ? trapSpawnPoint.rotation : transform.rotation;
+
+        NetworkObject spawnedTrap = Runner.Spawn(
+            trapPrefab,
+            spawnPosition,
+            spawnRotation,
+            Object.InputAuthority
+        );
+
+        if (spawnedTrap == null)
+            return false;
+
+        RaceTrap raceTrap = spawnedTrap.GetComponent<RaceTrap>();
+
+        if (raceTrap != null)
+            raceTrap.Initialize(Object.InputAuthority);
+
+        HasTrap = false;
+        TrapUseCooldown = TickTimer.CreateFromSeconds(Runner, Mathf.Max(0.01f, trapUseCooldownSeconds));
+        return true;
+    }
+    
+    private Vector3 GetTrapSpawnPosition()
+    {
+        if (trapSpawnPoint != null)
+            return trapSpawnPoint.position;
+
+        Vector3 behindDirection = isGrounded
+            ? -GetMovementDirection()
+            : -transform.forward;
+
+        if (behindDirection.sqrMagnitude <= 0.0001f)
+            behindDirection = -transform.forward;
+
+        return transform.position + behindDirection.normalized * trapSpawnDistanceBehindPlayer;
     }
 
     private void Move(RaceInputData input, RaceMovementSettings settings, float deltaTime)
@@ -196,7 +378,7 @@ public class RacePlayerController : NetworkBehaviour
         cachedRigidbody = GetComponent<Rigidbody>();
         cachedCollider = GetComponent<Collider>();
 
-        if (cachedRigidbody == null)
+        if (!cachedRigidbody)
             return;
 
         cachedRigidbody.isKinematic = true;
@@ -244,10 +426,10 @@ public class RacePlayerController : NetworkBehaviour
         if (settings.groundHeightOffset > 0f)
             return settings.groundHeightOffset;
 
-        if (cachedCollider == null)
+        if (!cachedCollider)
             cachedCollider = GetComponent<Collider>();
 
-        if (cachedCollider == null)
+        if (!cachedCollider)
             return 0f;
 
         return Mathf.Max(0f, transform.position.y - cachedCollider.bounds.min.y);
@@ -297,11 +479,86 @@ public class RacePlayerController : NetworkBehaviour
 
     private RaceMovementSettings GetSettings()
     {
-        if (movementSettings != null)
+        if (movementSettings)
             return movementSettings;
 
         Debug.LogWarning("RaceMovementSettings is not assigned. Using temporary defaults.");
         movementSettings = ScriptableObject.CreateInstance<RaceMovementSettings>();
         return movementSettings;
+    }
+    
+    private void OnTrapHitCounterChanged()
+    {
+        RunRequiredCountingLoops();
+
+        if (!Object.HasInputAuthority)
+            return;
+
+        PlayLocalTrapHitFeedback();
+    }
+
+    private void RunRequiredCountingLoops()
+    {
+        int firstCounter = 0;
+        int secondCounter = 0;
+        int thirdCounter = 0;
+
+        for (int i = 0; i < 1000; i++)
+            firstCounter = i;
+
+        for (int i = 0; i < 1000; i++)
+            secondCounter = i;
+
+        for (int i = 0; i < 1000; i++)
+            thirdCounter = i;
+
+        requiredLoopResult = firstCounter + secondCounter + thirdCounter;
+    }
+
+    private void PlayLocalTrapHitFeedback()
+    {
+        if (hitVisualEffectPrefab)
+            Instantiate(hitVisualEffectPrefab, transform.position, Quaternion.identity);
+
+        if (hitAudioSource)
+            hitAudioSource.Play();
+
+        if (hitFlashRenderers == null || hitFlashRenderers.Length == 0)
+            return;
+
+        if (hitFlashRoutine != null)
+            StopCoroutine(hitFlashRoutine);
+
+        hitFlashRoutine = StartCoroutine(FlashAfterTrapHit());
+    }
+
+    private IEnumerator FlashAfterTrapHit()
+    {
+        Color[] originalColors = new Color[hitFlashRenderers.Length];
+
+        for (int i = 0; i < hitFlashRenderers.Length; i++)
+        {
+            Renderer currentRenderer = hitFlashRenderers[i];
+
+            if (!currentRenderer || !currentRenderer.material)
+                continue;
+
+            originalColors[i] = currentRenderer.material.color;
+            currentRenderer.material.color = hitFlashColor;
+        }
+
+        yield return new WaitForSeconds(hitFlashSeconds);
+
+        for (int i = 0; i < hitFlashRenderers.Length; i++)
+        {
+            Renderer currentRenderer = hitFlashRenderers[i];
+
+            if (!currentRenderer || !currentRenderer.material)
+                continue;
+
+            currentRenderer.material.color = originalColors[i];
+        }
+
+        hitFlashRoutine = null;
     }
 }

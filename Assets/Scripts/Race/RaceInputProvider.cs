@@ -12,6 +12,7 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
     [SerializeField] private InputActionReference accelerateAction;
     [SerializeField] private InputActionReference brakeAction;
     [SerializeField] private InputActionReference handbrakeAction;
+    [SerializeField] private InputActionReference useTrapAction;
 
     [Header("Defaults")]
     [SerializeField] private bool createDefaultActions = true;
@@ -21,6 +22,7 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
     private InputAction accelerateFallbackAction;
     private InputAction brakeFallbackAction;
     private InputAction handbrakeFallbackAction;
+    private InputAction useTrapFallbackAction;
 
     private void Awake()
     {
@@ -41,7 +43,7 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
 
     private void Update()
     {
-        if (registeredRunner == null)
+        if (!registeredRunner)
             TryRegisterRunner();
     }
 
@@ -49,7 +51,7 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
     {
         DisableActions();
 
-        if (registeredRunner != null)
+        if (registeredRunner)
         {
             registeredRunner.RemoveCallbacks(this);
             registeredRunner = null;
@@ -63,12 +65,12 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
 
     private void TryRegisterRunner()
     {
-        if (registeredRunner != null)
+        if (registeredRunner)
             return;
 
         NetworkRunner runner = FindAnyObjectByType<NetworkRunner>();
 
-        if (runner == null)
+        if (!runner)
             return;
 
         registeredRunner = runner;
@@ -100,6 +102,11 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
         handbrakeFallbackAction = new InputAction("Race Handbrake", InputActionType.Button);
         handbrakeFallbackAction.AddBinding("<Keyboard>/space");
         handbrakeFallbackAction.AddBinding("<Gamepad>/buttonSouth");
+        
+        useTrapFallbackAction = new InputAction("Race Use Trap", InputActionType.Button);
+        useTrapFallbackAction.AddBinding("<Keyboard>/e");
+        useTrapFallbackAction.AddBinding("<Mouse>/leftButton");
+        useTrapFallbackAction.AddBinding("<Gamepad>/buttonWest");
     }
 
     private void EnableActions()
@@ -108,11 +115,13 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
         EnableAction(accelerateAction);
         EnableAction(brakeAction);
         EnableAction(handbrakeAction);
+        EnableAction(useTrapAction);
 
         steerFallbackAction?.Enable();
         accelerateFallbackAction?.Enable();
         brakeFallbackAction?.Enable();
         handbrakeFallbackAction?.Enable();
+        useTrapFallbackAction?.Enable();
     }
 
     private void DisableActions()
@@ -121,11 +130,13 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
         DisableAction(accelerateAction);
         DisableAction(brakeAction);
         DisableAction(handbrakeAction);
+        DisableAction(useTrapAction);
 
         steerFallbackAction?.Disable();
         accelerateFallbackAction?.Disable();
         brakeFallbackAction?.Disable();
         handbrakeFallbackAction?.Disable();
+        useTrapFallbackAction?.Disable();
     }
 
     private void DisposeFallbackActions()
@@ -134,23 +145,24 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
         accelerateFallbackAction?.Dispose();
         brakeFallbackAction?.Dispose();
         handbrakeFallbackAction?.Dispose();
+        useTrapFallbackAction?.Dispose();
     }
 
     private static void EnableAction(InputActionReference actionReference)
     {
-        if (actionReference != null && actionReference.action != null)
+        if (actionReference && actionReference.action != null)
             actionReference.action.Enable();
     }
 
     private static void DisableAction(InputActionReference actionReference)
     {
-        if (actionReference != null && actionReference.action != null)
+        if (actionReference && actionReference.action != null)
             actionReference.action.Disable();
     }
 
     private float ReadAxis(InputActionReference actionReference, InputAction fallbackAction)
     {
-        InputAction action = actionReference != null && actionReference.action != null
+        InputAction action = actionReference && actionReference.action != null
             ? actionReference.action
             : fallbackAction;
 
@@ -159,7 +171,7 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
 
     private float ReadPositive(InputActionReference actionReference, InputAction fallbackAction)
     {
-        InputAction action = actionReference != null && actionReference.action != null
+        InputAction action = actionReference && actionReference.action != null
             ? actionReference.action
             : fallbackAction;
 
@@ -168,7 +180,7 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
 
     private bool ReadButton(InputActionReference actionReference, InputAction fallbackAction)
     {
-        InputAction action = actionReference != null && actionReference.action != null
+        InputAction action = actionReference && actionReference.action != null
             ? actionReference.action
             : fallbackAction;
 
@@ -185,6 +197,7 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
             data.Throttle = ReadPositive(accelerateAction, accelerateFallbackAction);
             data.Brake = ReadPositive(brakeAction, brakeFallbackAction);
             data.Buttons.Set(RaceInputButton.Handbrake, ReadButton(handbrakeAction, handbrakeFallbackAction));
+            data.Buttons.Set(RaceInputButton.UseTrap, ReadButton(useTrapAction, useTrapFallbackAction));
         }
 
         input.Set(data);

@@ -1,4 +1,5 @@
 public enum RaceInputButton
 {
-    Handbrake = 0
+    Handbrake = 0,
+    UseTrap = 1
 }

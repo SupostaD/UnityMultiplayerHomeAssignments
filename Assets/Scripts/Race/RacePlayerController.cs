@@ -15,6 +15,7 @@ public class RacePlayerController : NetworkBehaviour
 
     [Header("Runtime")]
     [SerializeField] private bool startOnTrack = true;
+    [SerializeField, Min(0f)] private float unexpectedPositionResetDistance = 25f;
 
     [Header("Trap / Projectile")]
     [SerializeField] private NetworkObject trapPrefab;
@@ -44,6 +45,9 @@ public class RacePlayerController : NetworkBehaviour
     [Networked] private float CurrentSpeed { get; set; }
     [Networked] private TickTimer TrapUseCooldown { get; set; }
     [Networked] private TickTimer StunTimer { get; set; }
+    [Networked] private Vector3 NetworkedPosition { get; set; }
+    [Networked] private Quaternion NetworkedRotation { get; set; }
+    [Networked] private NetworkBool HasNetworkedTransform { get; set; }
 
     private bool isOnTrack;
     private bool isGrounded;
@@ -51,6 +55,8 @@ public class RacePlayerController : NetworkBehaviour
     private Vector3 groundNormal = Vector3.up;
     private Rigidbody cachedRigidbody;
     private Collider cachedCollider;
+    private Collider[] ownColliders;
+    private NetworkTransform cachedNetworkTransform;
     private NetworkButtons previousButtons;
     private Coroutine hitFlashRoutine;
     private int requiredLoopResult;
@@ -62,6 +68,7 @@ public class RacePlayerController : NetworkBehaviour
     private void Awake()
     {
         ConfigureRigidbody();
+        DisableNetworkTransformForRace();
     }
 
     private void Reset()
@@ -71,6 +78,7 @@ public class RacePlayerController : NetworkBehaviour
 
     public override void Spawned()
     {
+        DisableNetworkTransformForRace();
         isOnTrack = startOnTrack;
 
         Debug.Log(
@@ -96,8 +104,13 @@ public class RacePlayerController : NetworkBehaviour
 
         if (Object.HasStateAuthority)
         {
+            WriteNetworkedTransform();
             ResetRaceProgress();
             HasTrap = startWithTrap;
+        }
+        else
+        {
+            ApplyNetworkedTransform();
         }
     }
 
@@ -109,6 +122,7 @@ public class RacePlayerController : NetworkBehaviour
         RaceMovementSettings settings = GetSettings();
         float deltaTime = Runner.DeltaTime;
 
+        RepairUnexpectedTransformReset();
         UpdateGrounding(settings, deltaTime);
 
         if (!GetInput(out RaceInputData input))
@@ -124,10 +138,29 @@ public class RacePlayerController : NetworkBehaviour
                 0f,
                 settings.brakeDeceleration * deltaTime
             );
+            WriteNetworkedTransform();
             return;
         }
 
         Move(input, settings, deltaTime);
+        WriteNetworkedTransform();
+    }
+
+    public override void Render()
+    {
+        if (Object.HasStateAuthority)
+            return;
+
+        ApplyNetworkedTransform();
+    }
+
+    public void InitializeSpawnTransform(Vector3 spawnPosition, Quaternion spawnRotation)
+    {
+        DisableNetworkTransformForRace();
+        transform.SetPositionAndRotation(spawnPosition, spawnRotation);
+        NetworkedPosition = spawnPosition;
+        NetworkedRotation = spawnRotation;
+        HasNetworkedTransform = true;
     }
 
     public void SetOnTrack(bool value)
@@ -377,6 +410,7 @@ public class RacePlayerController : NetworkBehaviour
     {
         cachedRigidbody = GetComponent<Rigidbody>();
         cachedCollider = GetComponent<Collider>();
+        ownColliders = GetComponentsInChildren<Collider>();
 
         if (!cachedRigidbody)
             return;
@@ -384,6 +418,52 @@ public class RacePlayerController : NetworkBehaviour
         cachedRigidbody.isKinematic = true;
         cachedRigidbody.useGravity = false;
         cachedRigidbody.interpolation = RigidbodyInterpolation.Interpolate;
+    }
+
+    private void DisableNetworkTransformForRace()
+    {
+        if (!cachedNetworkTransform)
+            cachedNetworkTransform = GetComponent<NetworkTransform>();
+
+        if (cachedNetworkTransform && cachedNetworkTransform.enabled)
+            cachedNetworkTransform.enabled = false;
+    }
+
+    private void WriteNetworkedTransform()
+    {
+        NetworkedPosition = transform.position;
+        NetworkedRotation = transform.rotation;
+        HasNetworkedTransform = true;
+    }
+
+    private void ApplyNetworkedTransform()
+    {
+        if (!HasNetworkedTransform)
+            return;
+
+        transform.SetPositionAndRotation(NetworkedPosition, NetworkedRotation);
+    }
+
+    private void RepairUnexpectedTransformReset()
+    {
+        if (!HasNetworkedTransform)
+            return;
+
+        Vector2 currentXZ = new Vector2(transform.position.x, transform.position.z);
+        Vector2 expectedXZ = new Vector2(NetworkedPosition.x, NetworkedPosition.z);
+        float maxDistance = Mathf.Max(1f, unexpectedPositionResetDistance);
+
+        if ((currentXZ - expectedXZ).sqrMagnitude <= maxDistance * maxDistance)
+            return;
+
+        Debug.LogWarning(
+            "RacePlayerController repaired unexpected transform reset. Current: " +
+            transform.position +
+            " | Expected: " +
+            NetworkedPosition
+        );
+
+        transform.SetPositionAndRotation(NetworkedPosition, NetworkedRotation);
     }
 
     private void UpdateGrounding(RaceMovementSettings settings, float deltaTime)
@@ -395,13 +475,7 @@ public class RacePlayerController : NetworkBehaviour
         Vector3 rayOrigin = checkPosition + Vector3.up * settings.groundCheckHeight;
         float rayDistance = settings.groundCheckHeight + settings.groundCheckDistance;
 
-        if (Physics.Raycast(
-                rayOrigin,
-                Vector3.down,
-                out RaycastHit hit,
-                rayDistance,
-                settings.groundMask,
-                QueryTriggerInteraction.Ignore))
+        if (TryFindGroundHit(rayOrigin, rayDistance, settings.groundMask, out RaycastHit hit))
         {
             isGrounded = true;
             groundNormal = hit.normal;
@@ -419,6 +493,56 @@ public class RacePlayerController : NetworkBehaviour
         groundNormal = Vector3.up;
         verticalVelocity += settings.gravity * deltaTime;
         transform.position += Vector3.down * (verticalVelocity * deltaTime);
+    }
+
+    private bool TryFindGroundHit(Vector3 rayOrigin, float rayDistance, LayerMask groundMask, out RaycastHit bestHit)
+    {
+        bestHit = default;
+        RaycastHit[] hits = Physics.RaycastAll(
+            rayOrigin,
+            Vector3.down,
+            rayDistance,
+            groundMask,
+            QueryTriggerInteraction.Ignore
+        );
+
+        float closestDistance = float.MaxValue;
+        bool foundGround = false;
+
+        foreach (RaycastHit hit in hits)
+        {
+            if (!hit.collider)
+                continue;
+
+            if (IsOwnCollider(hit.collider))
+                continue;
+
+            if (hit.distance >= closestDistance)
+                continue;
+
+            closestDistance = hit.distance;
+            bestHit = hit;
+            foundGround = true;
+        }
+
+        return foundGround;
+    }
+
+    private bool IsOwnCollider(Collider candidate)
+    {
+        if (!candidate)
+            return false;
+
+        if (ownColliders == null || ownColliders.Length == 0)
+            ownColliders = GetComponentsInChildren<Collider>();
+
+        foreach (Collider ownCollider in ownColliders)
+        {
+            if (ownCollider == candidate)
+                return true;
+        }
+
+        return false;
     }
 
     private float GetGroundHeightOffset(RaceMovementSettings settings)

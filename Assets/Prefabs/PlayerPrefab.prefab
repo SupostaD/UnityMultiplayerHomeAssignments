@@ -344,7 +344,6 @@ GameObject:
   - component: {fileID: 5127524762189206048}
   - component: {fileID: 3712097478402035577}
   - component: {fileID: 4897500413176995907}
-  - component: {fileID: 7858254157167630170}
   - component: {fileID: 1183385551363767509}
   - component: {fileID: 3116395805332452890}
   - component: {fileID: 5232251483762433753}
@@ -416,28 +415,10 @@ MonoBehaviour:
   Flags: 262145
   NestedObjects: []
   NetworkedBehaviours:
-  - {fileID: 7858254157167630170}
   - {fileID: 1183385551363767509}
   - {fileID: 3116395805332452890}
   - {fileID: 5232251483762433753}
   ForceRemoteRenderTimeframe: 0
---- !u!114 &7858254157167630170
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6897131918027433929}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 158639473, guid: e725a070cec140c4caffb81624c8c787, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Fusion.Runtime.dll::Fusion.NetworkTransform
-  _stateAuthorityChangeErrorCorrectionDelta: 0
-  SyncScale: 0
-  SyncParent: 0
-  _autoAOIOverride: 0
-  DisableSharedModeInterpolation: 0
 --- !u!114 &1183385551363767509
 MonoBehaviour:
   m_ObjectHideFlags: 0

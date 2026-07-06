@@ -408,7 +408,8 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             playerPrefab,
             spawnPosition,
             spawnRotation,
-            runner.LocalPlayer
+            runner.LocalPlayer,
+            (_, spawnedObject) => ApplySpawnTransform(spawnedObject, spawnPosition, spawnRotation)
         );
 
         if (localPlayerObject == null)
@@ -417,7 +418,7 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             return;
         }
 
-        localPlayerObject.transform.SetPositionAndRotation(spawnPosition, spawnRotation);
+        ApplySpawnTransform(localPlayerObject, spawnPosition, spawnRotation);
 
         Debug.Log(
             "Player spawned. Actual position after force set: " +
@@ -433,6 +434,27 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         runner.SetPlayerObject(runner.LocalPlayer, localPlayerObject);
 
         characterSelectionUI?.Hide();
+    }
+
+    private void ApplySpawnTransform(NetworkObject playerObject, Vector3 spawnPosition, Quaternion spawnRotation)
+    {
+        if (playerObject == null)
+            return;
+
+        RacePlayerController racePlayerController = playerObject.GetComponent<RacePlayerController>();
+
+        if (racePlayerController != null)
+        {
+            racePlayerController.InitializeSpawnTransform(spawnPosition, spawnRotation);
+            return;
+        }
+
+        NetworkTransform networkTransform = playerObject.GetComponent<NetworkTransform>();
+
+        if (networkTransform != null)
+            networkTransform.Teleport(spawnPosition, spawnRotation);
+
+        playerObject.transform.SetPositionAndRotation(spawnPosition, spawnRotation);
     }
 
     private bool PlayerAlreadyHasCharacter(PlayerRef player)

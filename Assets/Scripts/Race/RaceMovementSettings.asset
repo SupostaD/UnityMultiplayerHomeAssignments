@@ -24,7 +24,7 @@ MonoBehaviour:
   offTrackSpeedMultiplier: 0.65
   groundMask:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 64
   groundCheckHeight: 2
   groundCheckDistance: 10
   groundHeightOffset: 0.5

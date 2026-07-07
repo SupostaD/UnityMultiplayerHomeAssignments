@@ -103,6 +103,7 @@ GameObject:
   - component: {fileID: 8001876909665465633}
   - component: {fileID: 455117147538224852}
   - component: {fileID: 7687974338730795047}
+  - component: {fileID: 3693692531524266487}
   m_Layer: 0
   m_Name: Trap
   m_TagString: Untagged
@@ -120,7 +121,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 3, y: 3, z: 3}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 680122420110037421}
@@ -144,6 +145,7 @@ MonoBehaviour:
   NestedObjects: []
   NetworkedBehaviours:
   - {fileID: 7687974338730795047}
+  - {fileID: 3693692531524266487}
   ForceRemoteRenderTimeframe: 0
 --- !u!135 &8001876909665465633
 SphereCollider:
@@ -210,3 +212,20 @@ MonoBehaviour:
   triggerCollider: {fileID: 8001876909665465633}
   visuals:
   - {fileID: 2450469317534961736}
+--- !u!114 &3693692531524266487
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8169865622890541920}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 158639473, guid: e725a070cec140c4caffb81624c8c787, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Fusion.Runtime.dll::Fusion.NetworkTransform
+  _stateAuthorityChangeErrorCorrectionDelta: 0
+  SyncScale: 0
+  SyncParent: 0
+  _autoAOIOverride: 1
+  DisableSharedModeInterpolation: 0

@@ -27,7 +27,7 @@ MonoBehaviour:
     m_Bits: 64
   groundCheckHeight: 2
   groundCheckDistance: 10
-  groundHeightOffset: 0.5
+  groundHeightOffset: 3
   groundSnapSpeed: 50
   gravity: 25
   airControlMultiplier: 0.35

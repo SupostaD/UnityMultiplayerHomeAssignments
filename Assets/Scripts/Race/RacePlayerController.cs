@@ -329,20 +329,26 @@ public class RacePlayerController : NetworkBehaviour
         Vector3 spawnPosition = GetTrapSpawnPosition();
         Quaternion spawnRotation = trapSpawnPoint != null ? trapSpawnPoint.rotation : transform.rotation;
 
+        int ownerCharacterIndex = 0;
+
+        NetworkPlayerCharacter playerCharacter = GetComponent<NetworkPlayerCharacter>();
+
+        if (playerCharacter)
+            ownerCharacterIndex = playerCharacter.CharacterIndex;
+
         NetworkObject spawnedTrap = Runner.Spawn(
             trapPrefab,
             spawnPosition,
             spawnRotation,
-            Object.InputAuthority
+            Object.InputAuthority,
+            (spawnRunner, spawnedObject) =>
+            {
+                RaceTrap raceTrap = spawnedObject.GetComponent<RaceTrap>();
+
+                if (raceTrap)
+                    raceTrap.Initialize(Object.InputAuthority, ownerCharacterIndex);
+            }
         );
-
-        if (spawnedTrap == null)
-            return false;
-
-        RaceTrap raceTrap = spawnedTrap.GetComponent<RaceTrap>();
-
-        if (raceTrap != null)
-            raceTrap.Initialize(Object.InputAuthority);
 
         HasTrap = false;
         TrapUseCooldown = TickTimer.CreateFromSeconds(Runner, Mathf.Max(0.01f, trapUseCooldownSeconds));

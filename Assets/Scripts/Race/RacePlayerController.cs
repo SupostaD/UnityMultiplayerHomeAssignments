@@ -620,11 +620,22 @@ public class RacePlayerController : NetworkBehaviour
     private void OnTrapHitCounterChanged()
     {
         RunRequiredCountingLoops();
-
-        if (!Object.HasInputAuthority)
+        
+        PlayTrapHitFlash();
+        
+        if (Object.HasInputAuthority)
+            PlayLocalTrapHitFeedback();
+    }
+    
+    private void PlayTrapHitFlash()
+    {
+        if (hitFlashRenderers == null || hitFlashRenderers.Length == 0)
             return;
 
-        PlayLocalTrapHitFeedback();
+        if (hitFlashRoutine != null)
+            StopCoroutine(hitFlashRoutine);
+
+        hitFlashRoutine = StartCoroutine(FlashAfterTrapHit());
     }
 
     private void RunRequiredCountingLoops()
@@ -652,14 +663,6 @@ public class RacePlayerController : NetworkBehaviour
 
         if (hitAudioSource)
             hitAudioSource.Play();
-
-        if (hitFlashRenderers == null || hitFlashRenderers.Length == 0)
-            return;
-
-        if (hitFlashRoutine != null)
-            StopCoroutine(hitFlashRoutine);
-
-        hitFlashRoutine = StartCoroutine(FlashAfterTrapHit());
     }
 
     private IEnumerator FlashAfterTrapHit()

@@ -136,6 +136,9 @@ public class RaceTrap : NetworkBehaviour
         }
 
         Debug.Log("Trap hit accepted.");
+        
+        if (ScoreManager.Instance != null)
+            ScoreManager.Instance.AddHitPoint(Owner);
 
         HideVisualsLocally();
         RequestDespawnAfterHit(hitPlayer.Object.InputAuthority, hitPlayer.transform.position);

@@ -319,22 +319,63 @@ public class ScoreManager : NetworkBehaviour
         }
 
         builder.AppendLine("");
+        AppendWinnerLine(builder, results);
+        builder.AppendLine("");
 
         if (FirstFinishAwarded)
         {
-            builder.Append("Winner bonus: ");
+            builder.Append("First finish bonus: ");
             builder.Append(GetPlayerName(FirstFinisher));
             builder.AppendLine(" +10");
         }
         else
         {
-            builder.AppendLine("Winner bonus: nobody");
+            builder.AppendLine("First finish bonus: nobody");
         }
 
         builder.Append("Ended by MasterClient: ");
         builder.Append(GetPlayerName(EndedBy));
 
         return builder.ToString();
+    }
+
+    private void AppendWinnerLine(StringBuilder builder, List<ResultEntry> results)
+    {
+        if (results.Count == 0 || results[0].Score <= 0)
+        {
+            builder.AppendLine("Winner: nobody");
+            return;
+        }
+
+        int bestScore = results[0].Score;
+        List<PlayerRef> winners = new List<PlayerRef>();
+
+        foreach (ResultEntry result in results)
+        {
+            if (result.Score != bestScore)
+                break;
+
+            winners.Add(result.Player);
+        }
+
+        if (winners.Count == 1)
+        {
+            builder.Append("Winner: ");
+            builder.AppendLine(GetPlayerName(winners[0]));
+            return;
+        }
+
+        builder.Append("Winners: ");
+
+        for (int i = 0; i < winners.Count; i++)
+        {
+            if (i > 0)
+                builder.Append(", ");
+
+            builder.Append(GetPlayerName(winners[i]));
+        }
+
+        builder.AppendLine();
     }
 
     private void OnDestroy()

@@ -22,6 +22,12 @@ MonoBehaviour:
   handbrakeTurnMultiplier: 1.55
   handbrakeDeceleration: 22
   offTrackSpeedMultiplier: 0.65
+  collisionMask:
+    serializedVersion: 2
+    m_Bits: 128
+  collisionSkinWidth: 0.05
+  collisionSlideIterations: 2
+  walkableNormalThreshold: 0.65
   groundMask:
     serializedVersion: 2
     m_Bits: 64

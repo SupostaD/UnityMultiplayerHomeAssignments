@@ -53,6 +53,7 @@ public class RacePlayerController : NetworkBehaviour
     private bool isGrounded;
     private float verticalVelocity;
     private Vector3 groundNormal = Vector3.up;
+    private Collider currentGroundCollider;
     private Rigidbody cachedRigidbody;
     private Collider cachedCollider;
     private Collider[] ownColliders;
@@ -409,7 +410,176 @@ public class RacePlayerController : NetworkBehaviour
             AlignToGround(settings, deltaTime);
 
         Vector3 movementDirection = GetMovementDirection();
-        transform.position += movementDirection * (effectiveSpeed * deltaTime);
+        MoveWithCollision(movementDirection * (effectiveSpeed * deltaTime), settings);
+    }
+
+    private void MoveWithCollision(Vector3 displacement, RaceMovementSettings settings)
+    {
+        if (displacement.sqrMagnitude <= 0.000001f)
+            return;
+
+        Vector3 position = transform.position;
+        Vector3 remaining = displacement;
+        int iterations = Mathf.Max(1, settings.collisionSlideIterations);
+        float skinWidth = Mathf.Max(0f, settings.collisionSkinWidth);
+
+        for (int i = 0; i < iterations; i++)
+        {
+            float distance = remaining.magnitude;
+
+            if (distance <= 0.0001f)
+                break;
+
+            Vector3 direction = remaining / distance;
+
+            if (!TryCastBody(position, direction, distance + skinWidth, settings, out RaycastHit hit))
+            {
+                position += remaining;
+                break;
+            }
+
+            float moveDistance = Mathf.Max(0f, hit.distance - skinWidth);
+            position += direction * moveDistance;
+
+            float leftoverDistance = Mathf.Max(0f, distance - moveDistance);
+            remaining = Vector3.ProjectOnPlane(direction * leftoverDistance, hit.normal);
+        }
+
+        transform.position = position;
+    }
+
+    private bool TryCastBody(Vector3 position, Vector3 direction, float distance, RaceMovementSettings settings, out RaycastHit bestHit)
+    {
+        bestHit = default;
+
+        if (!cachedCollider)
+            cachedCollider = GetComponent<Collider>();
+
+        if (!cachedCollider)
+            return false;
+
+        RaycastHit[] hits = cachedCollider is CapsuleCollider capsuleCollider
+            ? CapsuleCastAll(position, direction, distance, capsuleCollider, settings.collisionMask)
+            : SphereCastAll(position, direction, distance, settings.collisionMask);
+
+        float closestDistance = float.MaxValue;
+        bool foundHit = false;
+
+        foreach (RaycastHit hit in hits)
+        {
+            if (!hit.collider)
+                continue;
+
+            if (IsOwnCollider(hit.collider))
+                continue;
+
+            if (hit.collider == currentGroundCollider)
+                continue;
+
+            if (IsWalkableSurface(hit.normal, settings.walkableNormalThreshold))
+                continue;
+
+            if (hit.distance >= closestDistance)
+                continue;
+
+            closestDistance = hit.distance;
+            bestHit = hit;
+            foundHit = true;
+        }
+
+        return foundHit;
+    }
+
+    private RaycastHit[] CapsuleCastAll(
+        Vector3 position,
+        Vector3 direction,
+        float distance,
+        CapsuleCollider capsuleCollider,
+        LayerMask collisionMask
+    )
+    {
+        Vector3 scale = transform.lossyScale;
+        Vector3 centerOffset = transform.rotation * Vector3.Scale(capsuleCollider.center, scale);
+        Vector3 center = position + centerOffset;
+        Vector3 axis = GetCapsuleAxis(capsuleCollider.direction);
+        float radiusScale = GetCapsuleRadiusScale(scale, capsuleCollider.direction);
+        float heightScale = GetCapsuleHeightScale(scale, capsuleCollider.direction);
+        float radius = Mathf.Max(0.001f, capsuleCollider.radius * radiusScale);
+        float height = Mathf.Max(radius * 2f, capsuleCollider.height * heightScale);
+        float halfSegment = Mathf.Max(0f, height * 0.5f - radius);
+        Vector3 pointA = center + axis * halfSegment;
+        Vector3 pointB = center - axis * halfSegment;
+
+        return Physics.CapsuleCastAll(
+            pointA,
+            pointB,
+            radius,
+            direction,
+            distance,
+            collisionMask,
+            QueryTriggerInteraction.Ignore
+        );
+    }
+
+    private RaycastHit[] SphereCastAll(Vector3 position, Vector3 direction, float distance, LayerMask collisionMask)
+    {
+        Bounds bounds = cachedCollider.bounds;
+        Vector3 centerOffset = bounds.center - transform.position;
+        Vector3 center = position + centerOffset;
+        float radius = Mathf.Max(0.001f, Mathf.Max(bounds.extents.x, bounds.extents.z));
+
+        return Physics.SphereCastAll(
+            center,
+            radius,
+            direction,
+            distance,
+            collisionMask,
+            QueryTriggerInteraction.Ignore
+        );
+    }
+
+    private Vector3 GetCapsuleAxis(int capsuleDirection)
+    {
+        switch (capsuleDirection)
+        {
+            case 0:
+                return transform.right;
+            case 2:
+                return transform.forward;
+            default:
+                return transform.up;
+        }
+    }
+
+    private float GetCapsuleHeightScale(Vector3 scale, int capsuleDirection)
+    {
+        switch (capsuleDirection)
+        {
+            case 0:
+                return Mathf.Abs(scale.x);
+            case 2:
+                return Mathf.Abs(scale.z);
+            default:
+                return Mathf.Abs(scale.y);
+        }
+    }
+
+    private float GetCapsuleRadiusScale(Vector3 scale, int capsuleDirection)
+    {
+        switch (capsuleDirection)
+        {
+            case 0:
+                return Mathf.Max(Mathf.Abs(scale.y), Mathf.Abs(scale.z));
+            case 2:
+                return Mathf.Max(Mathf.Abs(scale.x), Mathf.Abs(scale.y));
+            default:
+                return Mathf.Max(Mathf.Abs(scale.x), Mathf.Abs(scale.z));
+        }
+    }
+
+    private bool IsWalkableSurface(Vector3 normal, float walkableNormalThreshold)
+    {
+        return Vector3.Dot(normal.normalized, Vector3.up) >= walkableNormalThreshold;
     }
 
     private void ConfigureRigidbody()
@@ -485,6 +655,7 @@ public class RacePlayerController : NetworkBehaviour
         {
             isGrounded = true;
             groundNormal = hit.normal;
+            currentGroundCollider = hit.collider;
             verticalVelocity = 0f;
 
             float targetY = hit.point.y + GetGroundHeightOffset(settings);
@@ -497,6 +668,7 @@ public class RacePlayerController : NetworkBehaviour
 
         isGrounded = false;
         groundNormal = Vector3.up;
+        currentGroundCollider = null;
         verticalVelocity += settings.gravity * deltaTime;
         transform.position += Vector3.down * (verticalVelocity * deltaTime);
     }

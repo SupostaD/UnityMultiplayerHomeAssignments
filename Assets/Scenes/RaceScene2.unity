@@ -2527,6 +2527,14 @@ MonoBehaviour:
   - {fileID: 1956435030}
   - {fileID: 2141281798}
   - {fileID: 2081375922}
+  characterButtonImages:
+  - {fileID: 330789276}
+  - {fileID: 1808685291}
+  - {fileID: 290642580}
+  characterButtonTexts:
+  - {fileID: 347520982}
+  - {fileID: 1807433946}
+  - {fileID: 707437995}
   statusText: {fileID: 1642206076}
 --- !u!224 &465283652
 RectTransform:
@@ -4286,6 +4294,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RaceCheckpoint
   checkpointIndex: 3
+  checkpointCollider: {fileID: 795527584}
 --- !u!65 &795527584
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -5328,6 +5337,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RaceCheckpoint
   checkpointIndex: 2
+  checkpointCollider: {fileID: 971457137}
 --- !u!65 &971457137
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -7867,6 +7877,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RaceCheckpoint
   checkpointIndex: 1
+  checkpointCollider: {fileID: 1642653168}
 --- !u!65 &1642653168
 BoxCollider:
   m_ObjectHideFlags: 0
@@ -7934,6 +7945,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RaceCheckpoint
   checkpointIndex: 0
+  checkpointCollider: {fileID: 1659150757}
 --- !u!65 &1659150757
 BoxCollider:
   m_ObjectHideFlags: 0

@@ -1,16 +1,19 @@
 using UnityEngine;
 
-[RequireComponent(typeof(Collider))]
 public class RaceTrackSurface : MonoBehaviour
 {
     [SerializeField] private bool playerIsOnTrackInside = true;
+    [SerializeField] private Collider surfaceCollider;
 
-    private void Reset()
+    private void Awake()
     {
-        Collider surfaceCollider = GetComponent<Collider>();
+        if (surfaceCollider == null)
+        {
+            Debug.LogError("RaceTrackSurface: Surface Collider is not assigned.", this);
+            return;
+        }
 
-        if (surfaceCollider != null)
-            surfaceCollider.isTrigger = true;
+        surfaceCollider.isTrigger = true;
     }
 
     private void OnTriggerEnter(Collider other)
@@ -25,9 +28,7 @@ public class RaceTrackSurface : MonoBehaviour
 
     private static void SetPlayerTrackState(Collider other, bool isOnTrack)
     {
-        RacePlayerController player = other.GetComponentInParent<RacePlayerController>();
-
-        if (player != null)
+        if (RacePlayerController.TryResolve(other, out RacePlayerController player))
             player.SetOnTrack(isOnTrack);
     }
 }

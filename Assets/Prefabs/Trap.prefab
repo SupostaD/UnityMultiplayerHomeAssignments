@@ -210,6 +210,7 @@ MonoBehaviour:
   lifeSeconds: 8
   hitDespawnValidationDistance: 4
   triggerCollider: {fileID: 8001876909665465633}
+  cachedRigidbody: {fileID: 455117147538224852}
   visuals:
   - {fileID: 2450469317534961736}
   _OwnerCharacterIndex: 0

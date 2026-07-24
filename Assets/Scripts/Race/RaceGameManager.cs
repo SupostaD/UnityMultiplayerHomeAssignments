@@ -117,7 +117,14 @@ public class RaceGameManager : NetworkBehaviour
     private void CacheCheckpoints()
     {
         if (checkpoints == null || checkpoints.Length == 0)
-            checkpoints = FindObjectsByType<RaceCheckpoint>(FindObjectsInactive.Exclude);
+        {
+            Debug.LogError(
+                "RaceGameManager: Checkpoints are not assigned.",
+                this
+            );
+            CheckpointCount = 1;
+            return;
+        }
 
         int highestCheckpointIndex = -1;
 
@@ -156,7 +163,9 @@ public class RaceGameManager : NetworkBehaviour
             if (playerObject == null)
                 continue;
 
-            if (playerObject.GetComponent<RacePlayerController>() != null)
+            if (NetworkObjectBehaviourReferences.TryGet(
+                    playerObject,
+                    out RacePlayerController _))
                 readyPlayers++;
         }
 
@@ -176,7 +185,11 @@ public class RaceGameManager : NetworkBehaviour
             if (playerObject == null)
                 continue;
 
-            RacePlayerController racePlayer = playerObject.GetComponent<RacePlayerController>();
+            RacePlayerController racePlayer =
+                NetworkObjectBehaviourReferences.GetRequired<RacePlayerController>(
+                    playerObject,
+                    this
+                );
 
             if (racePlayer == null)
                 continue;
@@ -256,7 +269,10 @@ public class RaceGameManager : NetworkBehaviour
         NetworkObject localPlayerObject = Runner.GetPlayerObject(Runner.LocalPlayer);
         RacePlayerController localRacePlayer = localPlayerObject == null
             ? null
-            : localPlayerObject.GetComponent<RacePlayerController>();
+            : NetworkObjectBehaviourReferences.GetRequired<RacePlayerController>(
+                localPlayerObject,
+                this
+            );
 
         if (localRacePlayer == null)
         {

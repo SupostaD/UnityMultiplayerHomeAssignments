@@ -7,6 +7,9 @@ using UnityEngine.InputSystem;
 
 public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
 {
+    [Header("Required References")]
+    [SerializeField] private NetworkRunner runner;
+
     [Header("Optional Input Actions")]
     [SerializeField] private InputActionReference steerAction;
     [SerializeField] private InputActionReference accelerateAction;
@@ -26,6 +29,14 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
 
     private void Awake()
     {
+        if (runner == null)
+        {
+            Debug.LogError(
+                "RaceInputProvider: Network Runner is not assigned.",
+                this
+            );
+        }
+
         if (createDefaultActions)
             CreateFallbackActions();
     }
@@ -33,18 +44,7 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
     private void OnEnable()
     {
         EnableActions();
-        TryRegisterRunner();
-    }
-
-    private void Start()
-    {
-        TryRegisterRunner();
-    }
-
-    private void Update()
-    {
-        if (!registeredRunner)
-            TryRegisterRunner();
+        RegisterRunner();
     }
 
     private void OnDisable()
@@ -63,14 +63,9 @@ public class RaceInputProvider : MonoBehaviour, INetworkRunnerCallbacks
         DisposeFallbackActions();
     }
 
-    private void TryRegisterRunner()
+    private void RegisterRunner()
     {
-        if (registeredRunner)
-            return;
-
-        NetworkRunner runner = FindAnyObjectByType<NetworkRunner>();
-
-        if (!runner)
+        if (registeredRunner != null || runner == null)
             return;
 
         registeredRunner = runner;

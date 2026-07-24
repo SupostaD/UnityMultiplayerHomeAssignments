@@ -1,10 +1,8 @@
 using System.Collections;
+using System.Collections.Generic;
 using Fusion;
 using UnityEngine;
 
-[RequireComponent(typeof(NetworkObject))]
-[RequireComponent(typeof(Collider))]
-[RequireComponent(typeof(Rigidbody))]
 public class RacePlayerController : NetworkBehaviour
 {
     [Header("Movement")]
@@ -12,6 +10,13 @@ public class RacePlayerController : NetworkBehaviour
 
     [Header("Ground Check")]
     [SerializeField] private Transform groundCheckOrigin;
+
+    [Header("Required References")]
+    [SerializeField] private Rigidbody cachedRigidbody;
+    [SerializeField] private Collider cachedCollider;
+    [SerializeField] private Collider[] ownColliders;
+    [SerializeField] private NetworkTransform cachedNetworkTransform;
+    [SerializeField] private NetworkPlayerCharacter playerCharacter;
 
     [Header("Runtime")]
     [SerializeField] private bool startOnTrack = true;
@@ -54,13 +59,15 @@ public class RacePlayerController : NetworkBehaviour
     private float verticalVelocity;
     private Vector3 groundNormal = Vector3.up;
     private Collider currentGroundCollider;
-    private Rigidbody cachedRigidbody;
-    private Collider cachedCollider;
-    private Collider[] ownColliders;
-    private NetworkTransform cachedNetworkTransform;
     private NetworkButtons previousButtons;
     private Coroutine hitFlashRoutine;
     private int requiredLoopResult;
+
+    private static readonly Dictionary<Collider, RacePlayerController>
+        PlayersByCollider = new Dictionary<Collider, RacePlayerController>();
+
+    private static readonly Dictionary<Rigidbody, RacePlayerController>
+        PlayersByRigidbody = new Dictionary<Rigidbody, RacePlayerController>();
 
     public float Speed => CurrentSpeed;
     public bool IsGrounded => isGrounded;
@@ -68,13 +75,19 @@ public class RacePlayerController : NetworkBehaviour
 
     private void Awake()
     {
+        ValidateReferences();
         ConfigureRigidbody();
         DisableNetworkTransformForRace();
     }
 
-    private void Reset()
+    private void OnEnable()
     {
-        ConfigureRigidbody();
+        RegisterCollisionReferences();
+    }
+
+    private void OnDisable()
+    {
+        UnregisterCollisionReferences();
     }
 
     public override void Spawned()
@@ -90,18 +103,6 @@ public class RacePlayerController : NetworkBehaviour
             " | Has InputAuthority: " +
             Object.HasInputAuthority
         );
-
-        Transform visuals = transform.Find("Visuals");
-
-        if (visuals != null)
-        {
-            Debug.Log(
-                "Visuals local position: " +
-                visuals.localPosition +
-                " | Visuals world position: " +
-                visuals.position
-            );
-        }
 
         if (Object.HasStateAuthority)
         {
@@ -332,8 +333,6 @@ public class RacePlayerController : NetworkBehaviour
 
         int ownerCharacterIndex = 0;
 
-        NetworkPlayerCharacter playerCharacter = GetComponent<NetworkPlayerCharacter>();
-
         if (playerCharacter)
             ownerCharacterIndex = playerCharacter.CharacterIndex;
 
@@ -344,7 +343,11 @@ public class RacePlayerController : NetworkBehaviour
             Object.InputAuthority,
             (spawnRunner, spawnedObject) =>
             {
-                RaceTrap raceTrap = spawnedObject.GetComponent<RaceTrap>();
+                RaceTrap raceTrap =
+                    NetworkObjectBehaviourReferences.GetRequired<RaceTrap>(
+                        spawnedObject,
+                        this
+                    );
 
                 if (raceTrap)
                     raceTrap.Initialize(Object.InputAuthority, ownerCharacterIndex);
@@ -451,9 +454,6 @@ public class RacePlayerController : NetworkBehaviour
     private bool TryCastBody(Vector3 position, Vector3 direction, float distance, RaceMovementSettings settings, out RaycastHit bestHit)
     {
         bestHit = default;
-
-        if (!cachedCollider)
-            cachedCollider = GetComponent<Collider>();
 
         if (!cachedCollider)
             return false;
@@ -584,10 +584,6 @@ public class RacePlayerController : NetworkBehaviour
 
     private void ConfigureRigidbody()
     {
-        cachedRigidbody = GetComponent<Rigidbody>();
-        cachedCollider = GetComponent<Collider>();
-        ownColliders = GetComponentsInChildren<Collider>();
-
         if (!cachedRigidbody)
             return;
 
@@ -598,9 +594,6 @@ public class RacePlayerController : NetworkBehaviour
 
     private void DisableNetworkTransformForRace()
     {
-        if (!cachedNetworkTransform)
-            cachedNetworkTransform = GetComponent<NetworkTransform>();
-
         if (cachedNetworkTransform && cachedNetworkTransform.enabled)
             cachedNetworkTransform.enabled = false;
     }
@@ -712,7 +705,7 @@ public class RacePlayerController : NetworkBehaviour
             return false;
 
         if (ownColliders == null || ownColliders.Length == 0)
-            ownColliders = GetComponentsInChildren<Collider>();
+            return false;
 
         foreach (Collider ownCollider in ownColliders)
         {
@@ -727,9 +720,6 @@ public class RacePlayerController : NetworkBehaviour
     {
         if (settings.groundHeightOffset > 0f)
             return settings.groundHeightOffset;
-
-        if (!cachedCollider)
-            cachedCollider = GetComponent<Collider>();
 
         if (!cachedCollider)
             return 0f;
@@ -787,6 +777,81 @@ public class RacePlayerController : NetworkBehaviour
         Debug.LogWarning("RaceMovementSettings is not assigned. Using temporary defaults.");
         movementSettings = ScriptableObject.CreateInstance<RaceMovementSettings>();
         return movementSettings;
+    }
+
+    public static bool TryResolve(
+        Collider sourceCollider,
+        out RacePlayerController player)
+    {
+        player = null;
+
+        if (sourceCollider == null)
+            return false;
+
+        if (PlayersByCollider.TryGetValue(sourceCollider, out player) && player)
+            return true;
+
+        Rigidbody attachedBody = sourceCollider.attachedRigidbody;
+
+        return attachedBody != null &&
+               PlayersByRigidbody.TryGetValue(attachedBody, out player) &&
+               player != null;
+    }
+
+    private void RegisterCollisionReferences()
+    {
+        if (cachedRigidbody != null)
+            PlayersByRigidbody[cachedRigidbody] = this;
+
+        if (ownColliders == null)
+            return;
+
+        foreach (Collider ownCollider in ownColliders)
+        {
+            if (ownCollider != null)
+                PlayersByCollider[ownCollider] = this;
+        }
+    }
+
+    private void UnregisterCollisionReferences()
+    {
+        if (cachedRigidbody != null &&
+            PlayersByRigidbody.TryGetValue(cachedRigidbody, out RacePlayerController bodyOwner) &&
+            bodyOwner == this)
+        {
+            PlayersByRigidbody.Remove(cachedRigidbody);
+        }
+
+        if (ownColliders == null)
+            return;
+
+        foreach (Collider ownCollider in ownColliders)
+        {
+            if (ownCollider != null &&
+                PlayersByCollider.TryGetValue(ownCollider, out RacePlayerController colliderOwner) &&
+                colliderOwner == this)
+            {
+                PlayersByCollider.Remove(ownCollider);
+            }
+        }
+    }
+
+    private void ValidateReferences()
+    {
+        if (cachedRigidbody == null)
+            Debug.LogError("RacePlayerController: Rigidbody is not assigned.", this);
+
+        if (cachedCollider == null)
+            Debug.LogError("RacePlayerController: Main Collider is not assigned.", this);
+
+        if (ownColliders == null || ownColliders.Length == 0)
+            Debug.LogError("RacePlayerController: Own Colliders are not assigned.", this);
+
+        if (cachedNetworkTransform == null)
+            Debug.LogError("RacePlayerController: Network Transform is not assigned.", this);
+
+        if (playerCharacter == null)
+            Debug.LogError("RacePlayerController: Player Character is not assigned.", this);
     }
     
     private void OnTrapHitCounterChanged()

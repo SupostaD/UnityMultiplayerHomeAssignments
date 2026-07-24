@@ -13,6 +13,8 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
     public const string GameModeSessionPropertyKey = "GameMode";
     public const string MapSessionPropertyKey = "Map";
     public const string SceneBuildIndexSessionPropertyKey = "SceneBuildIndex";
+    private const int MinimumRoomPlayers = 2;
+    private const int MaximumRoomPlayers = 10;
 
     [Serializable]
     private class LobbyMapOption
@@ -29,7 +31,7 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
     }
 
     [Header("Fusion")]
-    [SerializeField] private NetworkRunner runnerPrefab;
+    [SerializeField] private NetworkRunnerPrefabReferences runnerPrefab;
     [SerializeField] private int gameSceneBuildIndex = 1;
 
     [Header("Game Modes And Maps")]
@@ -239,15 +241,22 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
             return;
         }
 
-        runner = Instantiate(runnerPrefab);
+        NetworkRunnerPrefabReferences runnerReferences = Instantiate(runnerPrefab);
+        runner = runnerReferences.Runner;
+        sceneManager = runnerReferences.SceneManager;
+
+        if (runner == null || sceneManager == null)
+        {
+            Debug.LogError(
+                "NetworkRunner prefab references are incomplete. Assign Runner and Scene Manager on the prefab.",
+                runnerReferences
+            );
+            return;
+        }
+
         runner.name = "NetworkRunner";
 
         DontDestroyOnLoad(runner.gameObject);
-
-        sceneManager = runner.GetComponent<NetworkSceneManagerDefault>();
-
-        if (sceneManager == null)
-            sceneManager = runner.gameObject.AddComponent<NetworkSceneManagerDefault>();
 
         runner.AddCallbacks(this);
     }
@@ -617,7 +626,7 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
         if (!TryGetMaxPlayers(out int maxPlayers))
         {
-            SetStatus("Select max players from 2 to 5");
+            SetStatus("Select max players from 2 to 10");
             RefreshButtons();
             return;
         }
@@ -798,7 +807,11 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
             return;
         }
 
-        LobbyPlayerInfo info = playerObject.GetComponent<LobbyPlayerInfo>();
+        LobbyPlayerInfo info =
+            NetworkObjectBehaviourReferences.GetRequired<LobbyPlayerInfo>(
+                playerObject,
+                this
+            );
 
         if (info != null)
         {
@@ -824,6 +837,15 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
         if (runner == null || !runner.IsSharedModeMasterClient)
         {
             SetStatus("Only MasterClient can start the game");
+            RefreshButtons();
+            return;
+        }
+
+        if (GetActivePlayerCount() < MinimumRoomPlayers)
+        {
+            SetStatus(
+                $"At least {MinimumRoomPlayers} players are required"
+            );
             RefreshButtons();
             return;
         }
@@ -936,7 +958,21 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
             maxPlayers = maxPlayersDropdown.value + 2;
         }
 
-        return maxPlayers >= 2 && maxPlayers <= 5;
+        return maxPlayers >= MinimumRoomPlayers &&
+               maxPlayers <= MaximumRoomPlayers;
+    }
+
+    private int GetActivePlayerCount()
+    {
+        if (runner == null)
+            return 0;
+
+        int playerCount = 0;
+
+        foreach (PlayerRef _ in runner.ActivePlayers)
+            playerCount++;
+
+        return playerCount;
     }
 
     private void RefreshButtons()
@@ -1010,7 +1046,9 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
             startGameButton.interactable = !isBusy &&
                                            isInRoom &&
                                            runner != null &&
-                                           runner.IsSharedModeMasterClient;
+                                           runner.IsSharedModeMasterClient &&
+                                           GetActivePlayerCount() >=
+                                           MinimumRoomPlayers;
     }
 
     private void ClearRoomList()
@@ -1046,7 +1084,11 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
             if (playerObject != null)
             {
-                LobbyPlayerInfo info = playerObject.GetComponent<LobbyPlayerInfo>();
+                LobbyPlayerInfo info =
+                    NetworkObjectBehaviourReferences.GetRequired<LobbyPlayerInfo>(
+                        playerObject,
+                        this
+                    );
 
                 if (info != null)
                 {
@@ -1148,7 +1190,7 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
         if (!TryGetMaxPlayers(out int maxPlayers))
         {
-            SetRoomSearchStatus("Select max players from 2 to 5");
+            SetRoomSearchStatus("Select max players from 2 to 10");
             RefreshButtons();
             return;
         }

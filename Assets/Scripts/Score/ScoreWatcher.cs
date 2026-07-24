@@ -39,7 +39,10 @@ public class ScoreWatcher : NetworkBehaviour
                 continue;
 
             RacePlayerController racePlayer =
-                playerObject.GetComponent<RacePlayerController>();
+                NetworkObjectBehaviourReferences.GetRequired<RacePlayerController>(
+                    playerObject,
+                    this
+                );
 
             if (racePlayer == null)
                 continue;

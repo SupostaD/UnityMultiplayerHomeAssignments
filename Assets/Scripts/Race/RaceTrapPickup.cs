@@ -1,8 +1,6 @@
 ﻿using Fusion;
 using UnityEngine;
 
-[RequireComponent(typeof(NetworkObject))]
-[RequireComponent(typeof(Collider))]
 public class RaceTrapPickup : NetworkBehaviour
 {
     [Header("Rules")]
@@ -30,9 +28,6 @@ public class RaceTrapPickup : NetworkBehaviour
 
     public override void Spawned()
     {
-        if (visuals == null || visuals.Length == 0)
-            visuals = GetComponentsInChildren<Renderer>();
-
         if (Object.HasStateAuthority) IsAvailable = true;
 
         RefreshVisuals();
@@ -53,9 +48,11 @@ public class RaceTrapPickup : NetworkBehaviour
     {
         if (!IsAvailable) return;
 
-        RacePlayerController player = other.GetComponentInParent<RacePlayerController>();
-
-        if (!player || !player.Object) return;
+        if (!RacePlayerController.TryResolve(other, out RacePlayerController player) ||
+            !player.Object)
+        {
+            return;
+        }
 
         if (!player.Object.HasStateAuthority) return;
 
@@ -123,8 +120,15 @@ public class RaceTrapPickup : NetworkBehaviour
 
     private void ConfigureCollider()
     {
-        triggerCollider = GetComponent<Collider>();
+        if (triggerCollider == null)
+        {
+            Debug.LogError("RaceTrapPickup: Trigger Collider is not assigned.", this);
+            return;
+        }
 
-        if (triggerCollider) triggerCollider.isTrigger = true;
+        if (visuals == null || visuals.Length == 0)
+            Debug.LogError("RaceTrapPickup: Visual Renderers are not assigned.", this);
+
+        triggerCollider.isTrigger = true;
     }
 }

@@ -1,25 +1,26 @@
 using UnityEngine;
 
-[RequireComponent(typeof(Collider))]
 public class RaceCheckpoint : MonoBehaviour
 {
     [SerializeField] private int checkpointIndex;
+    [SerializeField] private Collider checkpointCollider;
 
     public int CheckpointIndex => checkpointIndex;
 
-    private void Reset()
+    private void Awake()
     {
-        Collider checkpointCollider = GetComponent<Collider>();
+        if (checkpointCollider == null)
+        {
+            Debug.LogError("RaceCheckpoint: Checkpoint Collider is not assigned.", this);
+            return;
+        }
 
-        if (checkpointCollider != null)
-            checkpointCollider.isTrigger = true;
+        checkpointCollider.isTrigger = true;
     }
 
     private void OnTriggerEnter(Collider other)
     {
-        RacePlayerController player = other.GetComponentInParent<RacePlayerController>();
-
-        if (player == null)
+        if (!RacePlayerController.TryResolve(other, out RacePlayerController player))
             return;
 
         player.ReachedCheckpoint(this);

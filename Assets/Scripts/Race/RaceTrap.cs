@@ -1,9 +1,6 @@
 ﻿using Fusion;
 using UnityEngine;
 
-[RequireComponent(typeof(NetworkObject))]
-[RequireComponent(typeof(Collider))]
-[RequireComponent(typeof(Rigidbody))]
 public class RaceTrap : NetworkBehaviour
 {
     [Header("Rules")]
@@ -12,6 +9,7 @@ public class RaceTrap : NetworkBehaviour
 
     [Header("References")]
     [SerializeField] private Collider triggerCollider;
+    [SerializeField] private Rigidbody cachedRigidbody;
     [SerializeField] private Renderer[] visuals;
 
     [Networked] public PlayerRef Owner { get; private set; }
@@ -21,7 +19,6 @@ public class RaceTrap : NetworkBehaviour
 
     [Networked] private TickTimer LifeTimer { get; set; }
 
-    private Rigidbody cachedRigidbody;
     private bool visualsHiddenLocally;
 
     private void Awake()
@@ -36,12 +33,6 @@ public class RaceTrap : NetworkBehaviour
 
     public override void Spawned()
     {
-        if (triggerCollider == null)
-            triggerCollider = GetComponent<Collider>();
-
-        if (visuals == null || visuals.Length == 0)
-            visuals = GetComponentsInChildren<Renderer>();
-
         ShowVisualsLocally();
         ApplyTrapColor();
 
@@ -81,9 +72,6 @@ public class RaceTrap : NetworkBehaviour
 
     private void ApplyTrapColor()
     {
-        if (visuals == null || visuals.Length == 0)
-            visuals = GetComponentsInChildren<Renderer>();
-
         Color trapColor = Color.white;
 
         if (GameSceneManager.Instance != null)
@@ -102,9 +90,8 @@ public class RaceTrap : NetworkBehaviour
     {
         Debug.Log("Trap trigger entered by: " + other.name);
 
-        RacePlayerController hitPlayer = other.GetComponentInParent<RacePlayerController>();
-
-        if (hitPlayer == null || hitPlayer.Object == null)
+        if (!RacePlayerController.TryResolve(other, out RacePlayerController hitPlayer) ||
+            hitPlayer.Object == null)
         {
             Debug.Log("Trap trigger ignored: no RacePlayerController.");
             return;
@@ -185,15 +172,20 @@ public class RaceTrap : NetworkBehaviour
 
     private void ConfigurePhysics()
     {
-        triggerCollider = GetComponent<Collider>();
-
         if (triggerCollider != null)
             triggerCollider.isTrigger = true;
 
-        cachedRigidbody = GetComponent<Rigidbody>();
-
         if (cachedRigidbody == null)
+        {
+            Debug.LogError("RaceTrap: Rigidbody is not assigned.", this);
             return;
+        }
+
+        if (triggerCollider == null)
+            Debug.LogError("RaceTrap: Trigger Collider is not assigned.", this);
+
+        if (visuals == null || visuals.Length == 0)
+            Debug.LogError("RaceTrap: Visual Renderers are not assigned.", this);
 
         cachedRigidbody.isKinematic = true;
         cachedRigidbody.useGravity = false;

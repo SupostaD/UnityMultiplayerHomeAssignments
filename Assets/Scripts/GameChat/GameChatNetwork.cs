@@ -151,7 +151,10 @@ public class GameChatNetwork : NetworkBehaviour
             return 0;
 
         NetworkPlayerCharacter playerCharacter =
-            playerObject.GetComponent<NetworkPlayerCharacter>();
+            NetworkObjectBehaviourReferences.GetRequired<NetworkPlayerCharacter>(
+                playerObject,
+                this
+            );
 
         if (playerCharacter == null)
             return 0;

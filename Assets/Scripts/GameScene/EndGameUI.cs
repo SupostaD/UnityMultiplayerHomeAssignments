@@ -106,13 +106,20 @@ public class EndGameUI : MonoBehaviour
 
         try
         {
-            NetworkRunner[] runners = FindObjectsByType<NetworkRunner>(FindObjectsInactive.Exclude);
+            NetworkRunner currentRunner =
+                NetworkRunnerPrefabReferences.Active != null
+                    ? NetworkRunnerPrefabReferences.Active.Runner
+                    : null;
 
-            foreach (NetworkRunner currentRunner in runners)
+            if (currentRunner == null)
             {
-                if (currentRunner == null)
-                    continue;
-
+                Debug.LogError(
+                    "EndGameUI: Active Network Runner reference is missing.",
+                    this
+                );
+            }
+            else
+            {
                 Task shutdownTask = currentRunner.Shutdown();
                 await Task.WhenAny(shutdownTask, Task.Delay(ShutdownTimeoutMilliseconds));
 

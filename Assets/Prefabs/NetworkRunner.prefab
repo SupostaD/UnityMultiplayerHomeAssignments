@@ -10,6 +10,8 @@ GameObject:
   m_Component:
   - component: {fileID: 3116956580125446943}
   - component: {fileID: 1104920529672150564}
+  - component: {fileID: 7342150984471206432}
+  - component: {fileID: 7342150984471206433}
   m_Layer: 0
   m_Name: NetworkRunner
   m_TagString: Untagged
@@ -44,3 +46,33 @@ MonoBehaviour:
   m_Script: {fileID: -1199893898, guid: e725a070cec140c4caffb81624c8c787, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Fusion.Runtime.dll::Fusion.NetworkRunner
+--- !u!114 &7342150984471206432
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8721085214832448411}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 90a93abf1a391964a94e5c139605105b, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Fusion::Fusion.NetworkSceneManagerDefault
+  IsSceneTakeOverEnabled: 1
+  LogSceneLoadErrors: 1
+  DestroySpawnedPrefabsOnSceneUnload: 1
+  AddressableScenesLabel: FusionScenes
+--- !u!114 &7342150984471206433
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8721085214832448411}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2af510f0254b4c869fa353726e1dbc89, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::NetworkRunnerPrefabReferences
+  runner: {fileID: 1104920529672150564}
+  sceneManager: {fileID: 7342150984471206432}

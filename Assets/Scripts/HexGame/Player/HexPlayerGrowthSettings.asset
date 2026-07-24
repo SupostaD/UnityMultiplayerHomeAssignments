@@ -1,0 +1,27 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4d85ba5e02674173928aa4d848cf4863, type: 3}
+  m_Name: HexPlayerGrowthSettings
+  m_EditorClassIdentifier: Assembly-CSharp::HexPlayerGrowthSettings
+  minimumUniformScale: 0.25
+  maximumUniformScale: 1
+  territoriesForMaximumSize: 169
+  minimumSizeMaximumSpeed: 9
+  minimumSizeAcceleration: 28
+  minimumSizeBraking: 34
+  maximumSizeMaximumSpeed: 4.5
+  maximumSizeAcceleration: 18
+  maximumSizeBraking: 25
+  minimumSizeMass: 1
+  massScaleExponent: 1
+  maximumPushVelocityChangePerSecond: 5
+  minimumMassRatioToPush: 1

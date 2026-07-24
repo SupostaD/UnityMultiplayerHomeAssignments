@@ -22,7 +22,13 @@ public class ChatMessageRowUI : MonoBehaviour
         messageText.overflowMode = TextOverflowModes.Overflow;
 
         if (layoutElement == null)
-            layoutElement = GetComponent<LayoutElement>();
+        {
+            Debug.LogError(
+                "ChatMessageRowUI: Layout Element is not assigned.",
+                this
+            );
+            return;
+        }
 
         RecalculateHeight();
 

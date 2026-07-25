@@ -86,6 +86,7 @@ public sealed class NetworkThirdPersonCameraRig : NetworkBehaviour
         if (!ValidateReferences())
             return;
 
+        CameraOcclusionController.SetLocalPlayerTarget(player);
         InitializeRotation();
         DetachCameraRootFromRollingPlayer();
         SetCameraRootActive(true);
@@ -319,6 +320,7 @@ public sealed class NetworkThirdPersonCameraRig : NetworkBehaviour
 
     private void ShutDownLocalCamera()
     {
+        CameraOcclusionController.ClearLocalPlayerTarget(player);
         DisableLookInput();
         SetCameraRootActive(false);
         RestoreCameraRootParent();

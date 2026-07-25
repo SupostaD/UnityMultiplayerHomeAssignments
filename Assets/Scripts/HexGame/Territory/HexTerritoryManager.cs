@@ -8,6 +8,13 @@ public class HexTerritoryManager : NetworkBehaviour
     public const int MaximumNetworkedPlayers = 16;
     private const float MinimumStrength = 0.0001f;
 
+    private enum CaptureVisualMode
+    {
+        Immediate = 0,
+        PlayerImpact = 1,
+        HexCorners = 2
+    }
+
     [Header("Required References")]
     [SerializeField] private HexMapGenerator mapGenerator;
     [SerializeField] private HexTerritoryCaptureSettings captureSettings;
@@ -23,6 +30,12 @@ public class HexTerritoryManager : NetworkBehaviour
 
     [Networked, Capacity(MaximumNetworkedTiles)]
     private NetworkArray<int> TileOwnerKeys => default;
+
+    [Networked, Capacity(MaximumNetworkedTiles)]
+    private NetworkArray<int> TileCaptureVisualModes => default;
+
+    [Networked, Capacity(MaximumNetworkedTiles)]
+    private NetworkArray<Vector2> TileCaptureImpactPoints => default;
 
     [Networked, Capacity(MaximumNetworkedPlayers)]
     private NetworkArray<float> PlayerStrengths => default;
@@ -58,7 +71,14 @@ public class HexTerritoryManager : NetworkBehaviour
             ActiveTileCount = mapGenerator.GeneratedTileCount;
 
             for (int i = 0; i < ActiveTileCount; i++)
-                TileOwnerKeys.Set(i, 0);
+            {
+                SetTileOwner(
+                    i,
+                    0,
+                    CaptureVisualMode.Immediate,
+                    Vector2.zero
+                );
+            }
 
             for (int i = 0; i < MaximumNetworkedPlayers; i++)
             {
@@ -70,12 +90,12 @@ public class HexTerritoryManager : NetworkBehaviour
         }
 
         ResetVisualCache();
-        RefreshTileVisuals();
+        RefreshTileVisuals(false);
     }
 
     public override void Render()
     {
-        RefreshTileVisuals();
+        RefreshTileVisuals(true);
     }
 
     public bool TryGetCoordinate(
@@ -237,7 +257,14 @@ public class HexTerritoryManager : NetworkBehaviour
         for (int i = 0; i < tileCount; i++)
         {
             if (TileOwnerKeys[i] == ownerKey)
-                TileOwnerKeys.Set(i, 0);
+            {
+                SetTileOwner(
+                    i,
+                    0,
+                    CaptureVisualMode.Immediate,
+                    Vector2.zero
+                );
+            }
         }
 
         if (TryGetPlayerSlot(player, out int slot))
@@ -263,7 +290,11 @@ public class HexTerritoryManager : NetworkBehaviour
 
         HexCoord coordinate = new HexCoord(q, r, layer);
 
-        if (!TryValidateCapture(requestingPlayer, coordinate, out int tileIndex))
+        if (!TryValidateCapture(
+                requestingPlayer,
+                coordinate,
+                out int tileIndex,
+                out Vector3 playerWorldPosition))
             return;
 
         int newOwnerKey = EncodeOwner(requestingPlayer);
@@ -281,7 +312,18 @@ public class HexTerritoryManager : NetworkBehaviour
             return;
         }
 
-        TileOwnerKeys.Set(tileIndex, newOwnerKey);
+        if (!mapGenerator.TryGetTile(coordinate, out HexTile capturedTile) ||
+            capturedTile == null)
+        {
+            return;
+        }
+
+        SetTileOwner(
+            tileIndex,
+            newOwnerKey,
+            CaptureVisualMode.PlayerImpact,
+            capturedTile.WorldToCapturePoint(playerWorldPosition)
+        );
 
         if (previousOwnerKey != 0 &&
             TryGetPlayerByOwnerKey(previousOwnerKey, out PlayerRef previousOwner))
@@ -370,9 +412,11 @@ public class HexTerritoryManager : NetworkBehaviour
     private bool TryValidateCapture(
         PlayerRef requestingPlayer,
         HexCoord coordinate,
-        out int tileIndex)
+        out int tileIndex,
+        out Vector3 playerWorldPosition)
     {
         tileIndex = -1;
+        playerWorldPosition = Vector3.zero;
 
         if (!ValidateMap() ||
             !mapGenerator.TryGetCoordinateIndex(coordinate, out tileIndex) ||
@@ -401,6 +445,7 @@ public class HexTerritoryManager : NetworkBehaviour
 
         Vector3 tileCenter = mapGenerator.CoordinateToWorldPosition(coordinate);
         Vector3 playerCenter = playerObject.transform.position;
+        playerWorldPosition = playerCenter;
         Vector2 planarDifference = new Vector2(
             playerCenter.x - tileCenter.x,
             playerCenter.z - tileCenter.z
@@ -476,7 +521,12 @@ public class HexTerritoryManager : NetworkBehaviour
             return;
         }
 
-        TileOwnerKeys.Set(tileIndex, 0);
+        SetTileOwner(
+            tileIndex,
+            0,
+            CaptureVisualMode.Immediate,
+            Vector2.zero
+        );
 
         int previousOwnerSlot = previousOwnerKey - 1;
 
@@ -508,7 +558,12 @@ public class HexTerritoryManager : NetworkBehaviour
             if (previousOwnerKey == capturingOwnerKey)
                 continue;
 
-            TileOwnerKeys.Set(tileIndex, capturingOwnerKey);
+            SetTileOwner(
+                tileIndex,
+                capturingOwnerKey,
+                CaptureVisualMode.HexCorners,
+                Vector2.zero
+            );
             capturedTileCount++;
 
             int previousOwnerSlot = previousOwnerKey - 1;
@@ -694,7 +749,14 @@ public class HexTerritoryManager : NetworkBehaviour
         for (int i = 0; i < tileCount; i++)
         {
             if (TileOwnerKeys[i] == ownerKey)
-                TileOwnerKeys.Set(i, 0);
+            {
+                SetTileOwner(
+                    i,
+                    0,
+                    CaptureVisualMode.Immediate,
+                    Vector2.zero
+                );
+            }
         }
     }
 
@@ -747,7 +809,7 @@ public class HexTerritoryManager : NetworkBehaviour
                 : -1;
     }
 
-    private void RefreshTileVisuals()
+    private void RefreshTileVisuals(bool animateChanges)
     {
         if (mapGenerator == null || mapGenerator.Board == null)
             return;
@@ -786,12 +848,56 @@ public class HexTerritoryManager : NetworkBehaviour
                 ? unclaimedColor
                 : GetPlayerColor(characterIndex);
 
-            tile.SetColor(tileColor);
+            tile.ConfigureCaptureVisual(captureSettings);
+
+            bool ownerChanged =
+                renderedOwnerKeys[i] != ownerKey;
+
+            if (!animateChanges ||
+                !visualsInitialized ||
+                !ownerChanged ||
+                ownerKey == 0)
+            {
+                tile.SetColor(tileColor);
+            }
+            else
+            {
+                CaptureVisualMode visualMode =
+                    (CaptureVisualMode)TileCaptureVisualModes[i];
+
+                if (visualMode == CaptureVisualMode.HexCorners)
+                {
+                    tile.CaptureFromCorners(tileColor);
+                }
+                else if (visualMode == CaptureVisualMode.PlayerImpact)
+                {
+                    tile.CaptureFromPlayer(
+                        tileColor,
+                        TileCaptureImpactPoints[i]
+                    );
+                }
+                else
+                {
+                    tile.SetColor(tileColor);
+                }
+            }
+
             renderedOwnerKeys[i] = ownerKey;
             renderedCharacterIndices[i] = characterIndex;
         }
 
         visualsInitialized = true;
+    }
+
+    private void SetTileOwner(
+        int tileIndex,
+        int ownerKey,
+        CaptureVisualMode visualMode,
+        Vector2 localImpactPoint)
+    {
+        TileCaptureVisualModes.Set(tileIndex, (int)visualMode);
+        TileCaptureImpactPoints.Set(tileIndex, localImpactPoint);
+        TileOwnerKeys.Set(tileIndex, ownerKey);
     }
 
     private Color GetPlayerColor(int characterIndex)

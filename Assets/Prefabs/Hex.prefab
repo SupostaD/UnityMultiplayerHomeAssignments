@@ -15,6 +15,8 @@ GameObject:
   - component: {fileID: 7176361352384587725}
   - component: {fileID: 7740057807264570660}
   - component: {fileID: 5555473120979727984}
+  - component: {fileID: 6397250365767913585}
+  - component: {fileID: 4483464817545021356}
   m_Layer: 0
   m_Name: Hex
   m_TagString: Untagged
@@ -624,7 +626,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: c22777d6e868e4f2fb421913386b154e, type: 2}
+  - {fileID: 2100000, guid: 0c48ed6c16cb0db4a853caa8ac363c2a, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -695,3 +697,31 @@ MonoBehaviour:
   coordinate:
     q: 0
     r: 0
+    layer: 0
+--- !u!114 &6397250365767913585
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1829020395750580286}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3b3e6d57e7755034d8ec05f6c54dda1f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HexCaptureVisual
+--- !u!114 &4483464817545021356
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1829020395750580286}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 38363db0b2bd61a4288fc797fa11fa89, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HexOcclusionTarget
+  targetRenderers:
+  - {fileID: 7136409621068432636}
+  fadeSpeed: 6

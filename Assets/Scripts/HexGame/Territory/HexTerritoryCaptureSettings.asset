@@ -12,4 +12,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d761a6fb211a4311909578923999e1a5, type: 3}
   m_Name: HexTerritoryCaptureSettings
   m_EditorClassIdentifier: Assembly-CSharp::HexTerritoryCaptureSettings
-  enclosedHexStrengthMultiplier: 1
+  captureAnimationDuration: 0.3
+  visualHexRadius: 2.5
+  enclosedHexStrengthMultiplier: 2

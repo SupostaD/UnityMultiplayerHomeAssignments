@@ -107,7 +107,7 @@ public class CharacterSelectionUI : MonoBehaviour
     {
         waitingForMatchStart = true;
         Refresh(lastOccupiedCharactersMask);
-        SetStatus("Waiting for all players to choose a color");
+        SetStatus("Waiting for all players to finish setup");
         Show();
     }
 

@@ -7,3 +7,10 @@ ShaderImporter:
   userData: Version 2.0
   assetBundleName: 
   assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 253878
+  packageName: Projectile Curve Visualizer
+  packageVersion: 
+  assetPath: Assets/TextMesh Pro/Shaders/TMPro.cginc
+  uploadId: 0

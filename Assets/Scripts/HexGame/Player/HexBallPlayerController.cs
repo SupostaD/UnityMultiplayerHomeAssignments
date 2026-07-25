@@ -27,6 +27,8 @@ public class HexBallPlayerController :
     [SerializeField, Range(0.5f, 0.99f)] private float groundCheckRadiusScale = 0.9f;
     [SerializeField, Range(0f, 1f)] private float minimumGroundNormalY = 0.55f;
     [SerializeField] private LayerMask groundLayers = ~0;
+    [SerializeField, Range(1, 3)] private int maxJumpCount = 2; 
+    [SerializeField] private BallJumpVFX jumpVFX;
 
     [Header("Hex Capture")]
     [SerializeField, Min(0.05f)] private float captureRetrySeconds = 0.15f;
@@ -41,6 +43,20 @@ public class HexBallPlayerController :
     [Header("Camera Relative Movement")]
     [SerializeField] private NetworkThirdPersonCameraRig cameraRig;
 
+    public bool IsGroundedForVFX()
+    {
+        return IsGrounded();
+    }
+    
+    private float GetActiveMaximumSpeed()
+    {
+        if (movementBoostTimer.ExpiredOrNotRunning(Runner))
+            return currentMaximumSpeed;
+
+        return currentMaximumSpeed *
+               Mathf.Max(1f, movementBoostMultiplier);
+    }
+    
     public float Strength
     {
         get
@@ -137,6 +153,9 @@ public class HexBallPlayerController :
     private float currentMaximumSpeed = 9f;
     private float currentAcceleration = 28f;
     private float currentBraking = 34f;
+    private int jumpsUsed;
+    private TickTimer movementBoostTimer;
+    private float movementBoostMultiplier = 1f;
     private readonly Dictionary<int, TickTimer> contactReportCooldowns =
         new Dictionary<int, TickTimer>();
 
@@ -267,14 +286,20 @@ public class HexBallPlayerController :
         if (ShouldDisablePhysicalRolling())
             body.angularVelocity = Vector3.zero;
 
+        bool grounded = IsGrounded();
+
+        if (grounded && body.linearVelocity.y <= 0.1f)
+            jumpsUsed = 0;
+
         bool jumpPressed = input.Buttons.WasPressed(
             previousButtons,
             HexBallInputButton.Jump
         );
+
         previousButtons = input.Buttons;
 
         if (jumpPressed)
-            TryJump();
+            TryJump(grounded);
 
         Move(input.Move, Runner.DeltaTime);
         UpdatePhysicalRolling();
@@ -437,7 +462,7 @@ public class HexBallPlayerController :
         Vector3 currentPlanarVelocity = new Vector3(currentVelocity.x, 0f, currentVelocity.z);
         Vector3 desiredDirection = new Vector3(moveInput.x, 0f, moveInput.y);
         Vector3 desiredVelocity =
-            desiredDirection * Mathf.Max(0.1f, currentMaximumSpeed);
+            desiredDirection * Mathf.Max(0.1f, GetActiveMaximumSpeed());
         float response = desiredDirection.sqrMagnitude > 0f
             ? Mathf.Max(0.1f, currentAcceleration)
             : Mathf.Max(0.1f, currentBraking);
@@ -454,14 +479,64 @@ public class HexBallPlayerController :
         ClampPlanarSpeed(currentVelocity.y);
     }
 
-    private void TryJump()
+    private void TryJump(bool grounded)
     {
-        if (!IsGrounded())
+        if (grounded && body.linearVelocity.y <= 0.1f)
+            jumpsUsed = 0;
+        
+        if (!grounded && jumpsUsed == 0)
+            jumpsUsed = 1;
+
+        if (jumpsUsed >= Mathf.Max(1, maxJumpCount))
             return;
+
+        jumpsUsed++;
 
         Vector3 velocity = body.linearVelocity;
         velocity.y = Mathf.Max(0.1f, jumpSpeed);
         body.linearVelocity = velocity;
+
+        if (jumpsUsed >= 2)
+            jumpVFX?.PlayDoubleJump();
+    }
+    
+    public void ApplyTrampolineLaunch(Vector3 fallbackDirection, float verticalSpeed,
+        float forwardVelocityChange, float speedMultiplier, float boostDuration)
+    {
+        if (!body || !Object || !Object.HasStateAuthority || IsEliminated) 
+            return;
+
+        Vector3 currentVelocity = body.linearVelocity;
+
+        Vector3 planarVelocity = new Vector3(currentVelocity.x, 0f, currentVelocity.z);
+
+        Vector3 launchDirection;
+
+        if (planarVelocity.sqrMagnitude > 0.25f) 
+            launchDirection = planarVelocity.normalized;
+        else
+        {
+            fallbackDirection.y = 0f;
+
+            launchDirection = fallbackDirection.sqrMagnitude > 0.001f
+                    ? fallbackDirection.normalized : transform.forward;
+        }
+
+        movementBoostMultiplier = Mathf.Max(1f, speedMultiplier);
+
+        movementBoostTimer = TickTimer.CreateFromSeconds(
+            Runner,Mathf.Max(0.05f, boostDuration));
+
+        Vector3 boostedPlanarVelocity = planarVelocity + launchDirection * 
+            Mathf.Max(0f, forwardVelocityChange);
+
+        boostedPlanarVelocity = Vector3.ClampMagnitude(
+                boostedPlanarVelocity, GetActiveMaximumSpeed());
+
+        body.linearVelocity = new Vector3(
+            boostedPlanarVelocity.x, Mathf.Max(0.1f, verticalSpeed), boostedPlanarVelocity.z);
+        
+        jumpsUsed = Mathf.Max(0, maxJumpCount - 1);
     }
 
     private bool IsGrounded()
@@ -795,8 +870,7 @@ public class HexBallPlayerController :
     {
         Vector3 velocity = body.linearVelocity;
         Vector3 planarVelocity = new Vector3(velocity.x, 0f, velocity.z);
-        float speedLimit = Mathf.Max(0.1f, currentMaximumSpeed);
-
+        float speedLimit = Mathf.Max(0.1f, GetActiveMaximumSpeed());
         if (planarVelocity.sqrMagnitude <= speedLimit * speedLimit)
             return;
 

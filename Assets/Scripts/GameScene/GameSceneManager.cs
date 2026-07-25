@@ -42,6 +42,9 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         new Color(0.1f, 0.1f, 0.1f),
         Color.white
     };
+    
+    [Header("Avatar Selection")]
+    [SerializeField] private AvatarSelectionManager avatarSelectionManager;
 
     [Header("End Game")] [SerializeField] private Button endGameButton;
     [SerializeField] private EndGameUI endGameUI;
@@ -517,8 +520,12 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
                 this
             );
 
-        if (playerCharacter != null)
+        if (playerCharacter)
+        {
             playerCharacter.CharacterIndex = characterIndex;
+
+            avatarSelectionManager?.ApplyLocalSelectionToPlayer(playerCharacter);
+        }
 
         runner.SetPlayerObject(runner.LocalPlayer, localPlayerObject);
 
@@ -775,6 +782,8 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     {
         if (!MatchStarted)
             return;
+       
+        avatarSelectionManager?.HideSelectionUI();
 
         characterSelectionUI?.Hide();
         Debug.Log(
@@ -803,12 +812,19 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
                 selectedPlayerCount++;
         }
 
-        if (activePlayerCount < MinimumPlayersToStart ||
-            selectedPlayerCount != activePlayerCount)
+        if (activePlayerCount < MinimumPlayersToStart || selectedPlayerCount != activePlayerCount)
+            return;
+        
+
+        if (!avatarSelectionManager)
         {
+            Debug.LogError("Avatar Selection Manager is missing.");
             return;
         }
 
+        if (!avatarSelectionManager.AllActivePlayersHaveAvatar())
+            return;
+        
         MatchStarted = true;
     }
 
@@ -816,6 +832,8 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     {
         if (!Object.HasStateAuthority)
             return;
+        
+        avatarSelectionManager?.ReleaseAvatar(player);
 
         if (hexTerritoryManager != null)
             hexTerritoryManager.ReleasePlayerTerritory(player);
@@ -834,6 +852,14 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
         if (changed)
             Debug.Log("Released character of player: " + player.PlayerId);
+
+        TryStartMatchWhenAllPlayersSelected();
+    }
+    
+    public void NotifyAvatarSelectionChanged()
+    {
+        if (!Object || !Object.HasStateAuthority)
+            return;
 
         TryStartMatchWhenAllPlayersSelected();
     }

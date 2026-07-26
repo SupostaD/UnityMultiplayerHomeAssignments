@@ -5,23 +5,16 @@ using UnityEngine.UI;
 public class CharacterSelectionUI : MonoBehaviour
 {
     [Header("Buttons")]
-    [SerializeField] private Button[] characterButtons = new Button[10];
-    [SerializeField] private Image[] characterButtonImages = new Image[10];
-    [SerializeField] private TMP_Text[] characterButtonTexts = new TMP_Text[10];
+    [SerializeField] private Button[] characterButtons = new Button[3];
+    [SerializeField] private Image[] characterButtonImages = new Image[3];
+    [SerializeField] private TMP_Text[] characterButtonTexts = new TMP_Text[3];
 
     [Header("Labels")]
     [SerializeField] private string[] optionNames =
     {
         "Red",
         "Blue",
-        "Green",
-        "Yellow",
-        "Cyan",
-        "Magenta",
-        "Orange",
-        "Purple",
-        "Black",
-        "White"
+        "Green"
     };
 
     [Header("Texts")]

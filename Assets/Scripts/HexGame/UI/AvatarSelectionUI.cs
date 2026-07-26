@@ -10,10 +10,6 @@ public class AvatarSelectionUI : MonoBehaviour
     [SerializeField] private Button[] avatarButtons = new Button[AvatarCount];
     [SerializeField] private TMP_Text[] avatarButtonTexts = new TMP_Text[AvatarCount];
 
-    [Header("Optional Previews")] 
-    [SerializeField] private Image[] avatarPreviewImages = new Image[AvatarCount];
-    [SerializeField] private Sprite[] avatarSprites = new Sprite[AvatarCount];
-
     [Header("Status")]
     [SerializeField] private TMP_Text statusText;
 
@@ -48,12 +44,6 @@ public class AvatarSelectionUI : MonoBehaviour
             button.onClick.RemoveAllListeners();
 
             button.onClick.AddListener(() => manager.RequestAvatar(avatarIndex));
-
-            if (avatarPreviewImages != null && i < avatarPreviewImages.Length &&
-                avatarPreviewImages[i] != null && avatarSprites != null && i < avatarSprites.Length)
-            {
-                avatarPreviewImages[i].sprite = avatarSprites[i];
-            }
         }
     }
 

@@ -9,5 +9,6 @@ public struct HexBallInputData : INetworkInput
 
 public enum HexBallInputButton
 {
-    Jump = 0
+    Jump = 0,
+    Dash = 1
 }

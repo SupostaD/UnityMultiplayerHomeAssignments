@@ -29,6 +29,14 @@ public class HexBallPlayerController :
     [SerializeField] private LayerMask groundLayers = ~0;
     [SerializeField, Range(1, 3)] private int maxJumpCount = 2; 
     [SerializeField] private BallJumpVFX jumpVFX;
+    
+    [Header("Dash")]
+    [SerializeField] private InputActionReference dashAction;
+    [SerializeField, Min(0.1f)] private float dashSpeed = 16f;
+    [SerializeField, Min(0.05f)] private float dashCooldownSeconds = 1f;
+    [SerializeField, Min(0.05f)] private float dashBoostDuration = 0.2f;
+    [SerializeField] private bool startWithDashAbility = true;
+    [SerializeField] private BallDashVFX dashVFX;
 
     [Header("Hex Capture")]
     [SerializeField, Min(0.05f)] private float captureRetrySeconds = 0.15f;
@@ -155,6 +163,7 @@ public class HexBallPlayerController :
     private float currentBraking = 34f;
     private int jumpsUsed;
     private TickTimer movementBoostTimer;
+    private TickTimer dashCooldownTimer;
     private float movementBoostMultiplier = 1f;
     private readonly Dictionary<int, TickTimer> contactReportCooldowns =
         new Dictionary<int, TickTimer>();
@@ -166,6 +175,15 @@ public class HexBallPlayerController :
     private static readonly Dictionary<Rigidbody, HexBallPlayerController>
         PlayersByRigidbody =
             new Dictionary<Rigidbody, HexBallPlayerController>();
+    
+    [Networked]
+    public NetworkBool HasDashAbility { get; private set; }
+    
+    [Networked]
+    private Vector3 LastDashDirection { get; set; }
+    
+    [Networked, OnChangedRender(nameof(OnDashVersionChanged))]
+    private int DashVersion { get; set; }
 
     private void Awake()
     {
@@ -190,6 +208,10 @@ public class HexBallPlayerController :
         }
 
         ValidateSettings();
+        
+        if (Object.HasStateAuthority)
+            HasDashAbility = startWithDashAbility;
+        
         RefreshGrowthState();
         ConfigurePhysicsForAuthority();
         RefreshEliminationState();
@@ -296,10 +318,18 @@ public class HexBallPlayerController :
             HexBallInputButton.Jump
         );
 
+        bool dashPressed = input.Buttons.WasPressed(
+            previousButtons,
+            HexBallInputButton.Dash
+            );
+
         previousButtons = input.Buttons;
 
         if (jumpPressed)
             TryJump(grounded);
+
+        if (dashPressed)
+            TryDash(input.Move);
 
         Move(input.Move, Runner.DeltaTime);
         UpdatePhysicalRolling();
@@ -498,6 +528,79 @@ public class HexBallPlayerController :
 
         if (jumpsUsed >= 2)
             jumpVFX?.PlayDoubleJump();
+    }
+
+    private void TryDash(Vector2 moveInput)
+    {
+        if (!HasDashAbility)
+            return;
+        
+        if (!dashCooldownTimer.ExpiredOrNotRunning(Runner))
+            return;
+        
+        Vector3 dashDirection = GetDashDirection(moveInput);
+        
+        if (dashDirection.sqrMagnitude <= 0.001f)
+            return;
+        
+        Vector3 currentVelocity = body.linearVelocity;
+        Vector3 dashVelocity = dashDirection.normalized * dashSpeed;
+        
+        movementBoostMultiplier = Mathf.Max(1f, 
+            dashSpeed / Mathf.Max(0.1f, currentMaximumSpeed)
+            );
+
+        movementBoostTimer = TickTimer.CreateFromSeconds(
+            Runner,
+            Mathf.Max(0.05f, dashBoostDuration)
+            );
+
+        body.linearVelocity = new Vector3(
+            dashVelocity.x,
+            currentVelocity.y,
+            dashVelocity.z);
+
+        dashCooldownTimer = TickTimer.CreateFromSeconds(
+            Runner,
+            Mathf.Max(0.05f, dashCooldownSeconds)
+        );
+        
+        LastDashDirection = dashDirection.normalized;
+        DashVersion++;
+    }
+
+    private Vector3 GetDashDirection(Vector2 moveInput)
+    {
+        Vector3 inputDirection = new Vector3(moveInput.x, 0f, moveInput.y);
+        
+        if (inputDirection.sqrMagnitude > 0.01f)
+            return inputDirection.normalized;
+        
+        Vector3 planarVelocity = body.linearVelocity;
+        planarVelocity.y = 0f;
+        
+        if (planarVelocity.sqrMagnitude > 0.01f)
+            return planarVelocity.normalized;
+        
+        return transform.forward;
+    }
+
+    private void OnDashVersionChanged()
+    {
+        Vector3 dashDirection = LastDashDirection;
+        
+        if (dashDirection.sqrMagnitude <= 0.001f)
+            dashDirection = transform.forward;
+        
+        dashVFX?.PlayDash(dashDirection);
+    }
+
+    public void GiveDashAbility()
+    {
+        if (Object == null || !Object.HasStateAuthority)
+            return;
+        
+        HasDashAbility = true;
     }
     
     public void ApplyTrampolineLaunch(Vector3 fallbackDirection, float verticalSpeed,
@@ -1074,6 +1177,9 @@ public class HexBallPlayerController :
 
         if (jumpAction != null && jumpAction.action != null)
             jumpAction.action.Enable();
+        
+        if (dashAction != null && dashAction.action != null)
+            dashAction.action.Enable();
 
         fallbackMoveAction?.Enable();
         localInputEnabled = true;
@@ -1089,6 +1195,9 @@ public class HexBallPlayerController :
 
         if (jumpAction != null && jumpAction.action != null)
             jumpAction.action.Disable();
+        
+        if (dashAction != null && dashAction.action != null)
+            dashAction.action.Disable();
 
         fallbackMoveAction?.Disable();
         localInputEnabled = false;
@@ -1121,6 +1230,11 @@ public class HexBallPlayerController :
                 HexBallInputButton.Jump,
                 ReadJumpInput()
             );
+            
+            inputData.Buttons.Set(
+                HexBallInputButton.Dash,
+                ReadDashInput()
+            );
         }
 
         input.Set(inputData);
@@ -1131,6 +1245,14 @@ public class HexBallPlayerController :
         return jumpAction != null &&
                jumpAction.action != null &&
                jumpAction.action.IsPressed();
+    }
+
+    private bool ReadDashInput()
+    {
+        if (dashAction != null && dashAction.action != null)
+            return dashAction.action.IsPressed();
+        
+        return Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed;
     }
 
     public void OnInputMissing(NetworkRunner callbackRunner, PlayerRef player, NetworkInput input)

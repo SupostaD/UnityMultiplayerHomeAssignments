@@ -70,7 +70,6 @@ public class PlayerBonusNameTag : NetworkBehaviour
             : 0;
 
         nameText.text = $"{playerName} {displayedStrength}";
-        nameText.color = Color.black;
     }
 
     private void UpdateNameTagPose()

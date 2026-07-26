@@ -24,6 +24,10 @@ public class HexTerritoryManager : NetworkBehaviour
 
     [Header("Visuals")]
     [SerializeField] private Color unclaimedColor = Color.white;
+    
+    [Header("Death Zone VFX")]
+    [SerializeField] private BallFallVFX fallVFX;
+    [SerializeField] private float fallVFXHeightOffset = 0.75f;
 
     [Networked]
     public int ActiveTileCount { get; private set; }
@@ -357,6 +361,17 @@ public class HexTerritoryManager : NetworkBehaviour
         {
             return;
         }
+        
+        NetworkObject affectedPlayerObject = Runner.GetPlayerObject(affectedPlayer);
+
+        if (affectedPlayerObject != null)
+        {
+            Vector3 vfxPosition =
+                affectedPlayerObject.transform.position +
+                Vector3.up * fallVFXHeightOffset;
+
+            RPC_PlayDeathZoneFallVFX(vfxPosition);
+        }
 
         HexGameRulesSettings rules = GetGameRulesSettings();
 
@@ -386,6 +401,12 @@ public class HexTerritoryManager : NetworkBehaviour
             ApplyStrengthDelta(playerSlot, -strengthLoss);
 
         RPC_ReturnPlayerFromDeathZone(affectedPlayer);
+    }
+    
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_PlayDeathZoneFallVFX(Vector3 worldPosition)
+    {
+        fallVFX?.PlayAbyssExplosion(worldPosition);
     }
 
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]

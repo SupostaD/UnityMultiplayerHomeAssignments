@@ -184,6 +184,9 @@ public class HexBallPlayerController :
     
     [Networked, OnChangedRender(nameof(OnDashVersionChanged))]
     private int DashVersion { get; set; }
+    
+    [Networked, OnChangedRender(nameof(OnDoubleJumpVersionChanged))]
+    private int DoubleJumpVersion { get; set; }
 
     private void Awake()
     {
@@ -527,7 +530,7 @@ public class HexBallPlayerController :
         body.linearVelocity = velocity;
 
         if (jumpsUsed >= 2)
-            jumpVFX?.PlayDoubleJump();
+            DoubleJumpVersion++;
     }
 
     private void TryDash(Vector2 moveInput)
@@ -583,6 +586,11 @@ public class HexBallPlayerController :
             return planarVelocity.normalized;
         
         return transform.forward;
+    }
+
+    private void OnDoubleJumpVersionChanged()
+    {
+        jumpVFX?.PlayDoubleJump();
     }
 
     private void OnDashVersionChanged()

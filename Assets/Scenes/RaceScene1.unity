@@ -38441,6 +38441,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BallFallVFX
   abyssExplosionPrefab: {fileID: 198856239026640498, guid: 9bba9cf244c53c5439505dfc96fdd11c, type: 3}
+  abyssExplosionClip: {fileID: 0}
+  abyssExplosionVolume: 1
 --- !u!114 &845823150 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 6249318836236264491, guid: bc2bd56e5258b924fabffbe6661c2896, type: 3}
@@ -50616,7 +50618,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1424124960}
   m_Direction: 2
   m_Value: 0
-  m_Size: 0.81333333
+  m_Size: 1
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -92906,7 +92908,7 @@ Transform:
   m_GameObject: {fileID: 2046547810}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.5, y: 0, z: -2}
+  m_LocalPosition: {x: 0, y: 4.8, z: -11.3}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -96787,6 +96789,63 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HexOcclusionTarget
   fadeSpeed: 6
+--- !u!1001 &254218960618810590
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 5465382562281804061, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_Name
+      value: Sound Manager
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 13.40671
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.7
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 170.50972
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106571508288417156, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 0470abe395652e542a0608ae46466a23, type: 3}
 --- !u!1001 &1414074773192578249
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -106179,3 +106238,4 @@ SceneRoots:
   - {fileID: 819542487}
   - {fileID: 1569249218}
   - {fileID: 1003346338}
+  - {fileID: 254218960618810590}

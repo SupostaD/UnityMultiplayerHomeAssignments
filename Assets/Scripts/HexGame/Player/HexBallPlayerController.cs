@@ -50,6 +50,9 @@ public class HexBallPlayerController :
 
     [Header("Camera Relative Movement")]
     [SerializeField] private NetworkThirdPersonCameraRig cameraRig;
+    
+    [Header("Audio")]
+    [SerializeField] private bool playSounds = true;
 
     public bool IsGroundedForVFX()
     {
@@ -187,6 +190,12 @@ public class HexBallPlayerController :
     
     [Networked, OnChangedRender(nameof(OnDoubleJumpVersionChanged))]
     private int DoubleJumpVersion { get; set; }
+    
+    [Networked, OnChangedRender(nameof(OnJumpVersionChanged))]
+    private int JumpVersion { get; set; }
+    
+    [Networked, OnChangedRender(nameof(OnTrampolineVersionChanged))]
+    private int TrampolineVersion { get; set; }
 
     private void Awake()
     {
@@ -531,6 +540,8 @@ public class HexBallPlayerController :
 
         if (jumpsUsed >= 2)
             DoubleJumpVersion++;
+        else
+            JumpVersion++;
     }
 
     private void TryDash(Vector2 moveInput)
@@ -591,6 +602,14 @@ public class HexBallPlayerController :
     private void OnDoubleJumpVersionChanged()
     {
         jumpVFX?.PlayDoubleJump();
+        if (playSounds)
+            GameSoundManager.Instance?.PlayDoubleJump(transform.position);
+    }
+    
+    private void OnJumpVersionChanged()
+    {
+        if (playSounds)
+            GameSoundManager.Instance?.PlayJump(transform.position);
     }
 
     private void OnDashVersionChanged()
@@ -601,6 +620,14 @@ public class HexBallPlayerController :
             dashDirection = transform.forward;
         
         dashVFX?.PlayDash(dashDirection);
+        if (playSounds)
+            GameSoundManager.Instance?.PlayDash(transform.position);
+    }
+    
+    private void OnTrampolineVersionChanged()
+    {
+        if (playSounds)
+            GameSoundManager.Instance?.PlayTrampoline(transform.position);
     }
 
     public void GiveDashAbility()
@@ -648,6 +675,8 @@ public class HexBallPlayerController :
             boostedPlanarVelocity.x, Mathf.Max(0.1f, verticalSpeed), boostedPlanarVelocity.z);
         
         jumpsUsed = Mathf.Max(0, maxJumpCount - 1);
+        
+        TrampolineVersion++;
     }
 
     private bool IsGrounded()

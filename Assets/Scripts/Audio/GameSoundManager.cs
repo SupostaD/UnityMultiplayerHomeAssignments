@@ -18,9 +18,11 @@ public class GameSoundManager : MonoBehaviour
     [Header("UI / Match")]
     [SerializeField] private AudioClip victoryClip;
 
-    [Header("Music")]
+    [Header("Music / Ambient")]
     [SerializeField] private AudioSource musicSource;
     [SerializeField] private AudioClip mainMenuTheme;
+    [SerializeField] private AudioClip gameAmbientClip;
+
 
     [Header("Volume")]
     [SerializeField, Range(0f, 1f)] private float sfxVolume = 1f;
@@ -39,14 +41,17 @@ public class GameSoundManager : MonoBehaviour
         }
 
         Instance = this;
+        DontDestroyOnLoad(gameObject);
 
         if (musicSource != null)
         {
             musicSource.playOnAwake = false;
             musicSource.loop = true;
             musicSource.volume = musicVolume;
+            musicSource.spatialBlend = 0f;
         }
     }
+    
 
     public void PlayJump(Vector3 position)
     {
@@ -90,19 +95,33 @@ public class GameSoundManager : MonoBehaviour
 
     public void PlayMainMenuTheme()
     {
-        if (musicSource == null || mainMenuTheme == null)
-            return;
-
-        musicSource.clip = mainMenuTheme;
-        musicSource.volume = musicVolume;
-        musicSource.loop = true;
-        musicSource.Play();
+        PlayMusic(mainMenuTheme);
+    }
+    
+    public void PlayGameAmbient()
+    {
+        PlayMusic(gameAmbientClip);
     }
 
     public void StopMusic()
     {
         if (musicSource != null)
             musicSource.Stop();
+    }
+    
+    private void PlayMusic(AudioClip clip)
+    {
+        if (musicSource == null || clip == null)
+            return;
+
+        if (musicSource.clip == clip && musicSource.isPlaying)
+            return;
+
+        musicSource.clip = clip;
+        musicSource.volume = musicVolume;
+        musicSource.loop = true;
+        musicSource.spatialBlend = 0f;
+        musicSource.Play();
     }
 
     private void Play2D(AudioClip clip)

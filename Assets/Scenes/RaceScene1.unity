@@ -38288,6 +38288,7 @@ GameObject:
   - component: {fileID: 842348417}
   - component: {fileID: 842348418}
   - component: {fileID: 842348419}
+  - component: {fileID: 842348420}
   m_Layer: 0
   m_Name: Manager
   m_TagString: Untagged
@@ -38435,7 +38436,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 842348411}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d2c818cbe333580448d8d6547300f769, type: 3}
   m_Name: 
@@ -38443,6 +38444,18 @@ MonoBehaviour:
   abyssExplosionPrefab: {fileID: 198856239026640498, guid: 9bba9cf244c53c5439505dfc96fdd11c, type: 3}
   abyssExplosionClip: {fileID: 0}
   abyssExplosionVolume: 1
+--- !u!114 &842348420
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 842348411}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2b21632c7b2a9724289fe2bc75e7f3bc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GameAmbientStarter
 --- !u!114 &845823150 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 6249318836236264491, guid: bc2bd56e5258b924fabffbe6661c2896, type: 3}
@@ -96797,6 +96810,18 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 1549834127693694329, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: musicSource
+      value: 
+      objectReference: {fileID: 254218960618810591}
+    - target: {fileID: 1549834127693694329, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: mainMenuTheme
+      value: 
+      objectReference: {fileID: 8300000, guid: 5141bb82b0403b6478f8e166e4a98936, type: 3}
+    - target: {fileID: 1549834127693694329, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+      propertyPath: gameAmbientClip
+      value: 
+      objectReference: {fileID: 8300000, guid: a684eb921c421f446a5c85f228c17a72, type: 3}
     - target: {fileID: 5465382562281804061, guid: 0470abe395652e542a0608ae46466a23, type: 3}
       propertyPath: m_Name
       value: Sound Manager
@@ -96846,6 +96871,11 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+--- !u!82 &254218960618810591 stripped
+AudioSource:
+  m_CorrespondingSourceObject: {fileID: 8293704662110098136, guid: 0470abe395652e542a0608ae46466a23, type: 3}
+  m_PrefabInstance: {fileID: 254218960618810590}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1001 &1414074773192578249
 PrefabInstance:
   m_ObjectHideFlags: 0

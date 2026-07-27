@@ -1409,6 +1409,7 @@ GameObject:
   - component: {fileID: 354985229}
   - component: {fileID: 354985228}
   - component: {fileID: 354985232}
+  - component: {fileID: 354985233}
   m_Layer: 5
   m_Name: Canvas
   m_TagString: Untagged
@@ -1522,6 +1523,18 @@ MonoBehaviour:
   lobbyPanel: {fileID: 253030512}
   roomPanel: {fileID: 1185935477}
   waitingPanel: {fileID: 1538071794}
+--- !u!114 &354985233
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 354985227}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fb703534c9437ac4884277dd557b6bb1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MainMenuMusicStarter
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0

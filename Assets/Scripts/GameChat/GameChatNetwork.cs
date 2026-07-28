@@ -1,15 +1,16 @@
 using System.Collections.Generic;
 using Fusion;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 public class GameChatNetwork : NetworkBehaviour
 {
     [System.Serializable]
     private sealed class PlayerProfileJson
     {
-        public int playerId;
-        public string playerName;
-        public int characterIndex;
+        public int id;
+        public string name;
+        public int character;
     }
 
     public static GameChatNetwork Instance { get; private set; }
@@ -35,24 +36,47 @@ public class GameChatNetwork : NetworkBehaviour
         if (runner == null)
             return;
 
-        string name = PrepareName(ChatLocalData.PlayerName);
         PlayerRef localPlayer = runner.LocalPlayer;
+
         PlayerProfileJson profile = new PlayerProfileJson
         {
-            playerId = localPlayer.PlayerId,
-            playerName = name,
-            characterIndex = GetPlayerCharacterIndex(localPlayer)
+            id = localPlayer.PlayerId,
+            name = PrepareName(ChatLocalData.PlayerName),
+            character = GetPlayerCharacterIndex(localPlayer)
         };
+
         string serializedProfile = JsonUtility.ToJson(profile);
 
-        RPC_RegisterPlayerProfileJson(localPlayer, serializedProfile);
+        if (serializedProfile.Length > 64)
+        {
+            Debug.LogError(
+                $"GameChatNetwork: Profile JSON is too long: " +
+                $"{serializedProfile.Length}/64 characters. " +
+                serializedProfile
+            );
+
+            return;
+        }
+
+        RPC_RegisterPlayerProfileJson(serializedProfile);
     }
 
     [Rpc(RpcSources.All, RpcTargets.All)]
     private void RPC_RegisterPlayerProfileJson(
-        PlayerRef player,
-        NetworkString<_128> serializedProfile)
+        NetworkString<_64> serializedProfile,
+        RpcInfo info = default)
     {
+        PlayerRef player = info.Source;
+
+        if (player == PlayerRef.None)
+        {
+            Debug.LogWarning(
+                "GameChatNetwork: Profile RPC has no valid sender."
+            );
+
+            return;
+        }
+
         PlayerProfileJson profile;
 
         try
@@ -67,24 +91,32 @@ public class GameChatNetwork : NetworkBehaviour
                 "GameChatNetwork: Invalid player profile JSON. " +
                 exception.Message
             );
+
             return;
         }
 
-        if (profile == null || profile.playerId != player.PlayerId)
+        if (profile == null ||
+            profile.id != player.PlayerId)
         {
             Debug.LogWarning(
                 "GameChatNetwork: Player profile JSON validation failed."
             );
+
             return;
         }
 
-        string name = PrepareName(profile.playerName);
+        string playerName = PrepareName(profile.name);
 
-        if (string.IsNullOrWhiteSpace(name))
-            name = "Player " + player.PlayerId;
+        if (string.IsNullOrWhiteSpace(playerName))
+        {
+            playerName =
+                "Player " + player.PlayerId;
+        }
 
-        playerNames[player] = name;
-        playerCharacterIndices[player] = profile.characterIndex;
+        playerNames[player] = playerName;
+
+        playerCharacterIndices[player] =
+            profile.character;
     }
 
     public void SendGlobalMessage(string message)

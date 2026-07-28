@@ -1184,11 +1184,11 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
     {
         string message = "Room: " + currentRoomName;
 
-        if (!string.IsNullOrWhiteSpace(currentGameModeName))
-            message += " | " + currentGameModeName;
-
-        if (!string.IsNullOrWhiteSpace(currentMapName))
-            message += " | " + currentMapName;
+        // if (!string.IsNullOrWhiteSpace(currentGameModeName))
+        //     message += " | " + currentGameModeName;
+        //
+        // if (!string.IsNullOrWhiteSpace(currentMapName))
+        //     message += " | " + currentMapName;
 
         return message;
     }

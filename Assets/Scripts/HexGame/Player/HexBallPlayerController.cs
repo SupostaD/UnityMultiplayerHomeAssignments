@@ -16,6 +16,7 @@ public class HexBallPlayerController :
     [SerializeField] private Collider bodyCollider;
     [SerializeField] private NetworkPlayerCharacter playerCharacter;
     [SerializeField] private NetworkTransform networkTransform;
+    [SerializeField] private HexPlayerAbilityController abilityController;
     [SerializeField] private bool configurePhysicsByAuthority = true;
     [SerializeField] private bool stateAuthorityUsesGravity = true;
     [SerializeField, Range(0f, 0.5f)] private float inputDeadZone = 0.08f;
@@ -27,7 +28,6 @@ public class HexBallPlayerController :
     [SerializeField, Range(0.5f, 0.99f)] private float groundCheckRadiusScale = 0.9f;
     [SerializeField, Range(0f, 1f)] private float minimumGroundNormalY = 0.55f;
     [SerializeField] private LayerMask groundLayers = ~0;
-    [SerializeField, Range(1, 3)] private int maxJumpCount = 2; 
     [SerializeField] private BallJumpVFX jumpVFX;
     
     [Header("Dash")]
@@ -35,7 +35,6 @@ public class HexBallPlayerController :
     [SerializeField, Min(0.1f)] private float dashSpeed = 16f;
     [SerializeField, Min(0.05f)] private float dashCooldownSeconds = 1f;
     [SerializeField, Min(0.05f)] private float dashBoostDuration = 0.2f;
-    [SerializeField] private bool startWithDashAbility = true;
     [SerializeField] private BallDashVFX dashVFX;
 
     [Header("Hex Capture")]
@@ -167,9 +166,31 @@ public class HexBallPlayerController :
     private int jumpsUsed;
     private TickTimer movementBoostTimer;
     private TickTimer dashCooldownTimer;
+    private TickTimer impactRecoveryTimer;
     private float movementBoostMultiplier = 1f;
+    private float impactSpeedAllowance;
+    private float impactSpeedAllowanceDecay;
+    private int nextImpactSequence;
+    private Vector3 pendingImpactVelocityCorrection;
+    private float impactCorrectionTimeRemaining;
     private readonly Dictionary<int, TickTimer> contactReportCooldowns =
         new Dictionary<int, TickTimer>();
+    private sealed class LocalPredictedImpact
+    {
+        public PlayerRef OtherPlayer;
+        public Vector3 ResolvedPlanarVelocity;
+        public float VerticalLift;
+        public float ExpiryTime;
+    }
+
+    private readonly Dictionary<int, LocalPredictedImpact>
+        predictedImpacts =
+            new Dictionary<int, LocalPredictedImpact>();
+    private readonly Dictionary<int, float>
+        localImpactCooldownExpiryTimes =
+            new Dictionary<int, float>();
+    private readonly List<int> predictedImpactKeysToRemove =
+        new List<int>();
 
     private static readonly Dictionary<Collider, HexBallPlayerController>
         PlayersByCollider =
@@ -178,12 +199,34 @@ public class HexBallPlayerController :
     private static readonly Dictionary<Rigidbody, HexBallPlayerController>
         PlayersByRigidbody =
             new Dictionary<Rigidbody, HexBallPlayerController>();
+
+    private static readonly HashSet<HexBallPlayerController>
+        ActivePlayers =
+            new HashSet<HexBallPlayerController>();
     
-    [Networked]
-    public NetworkBool HasDashAbility { get; private set; }
+    public bool HasDashAbility =>
+        abilityController != null &&
+        abilityController.HasAbility(HexPlayerAbilityType.Dash);
     
     [Networked]
     private Vector3 LastDashDirection { get; set; }
+
+    [Networked]
+    private Vector3 SimulatedVelocity { get; set; }
+
+    [Networked]
+    private float VelocitySampleSimulationTime { get; set; }
+
+    [Networked]
+    private TickTimer DashImpactTimer { get; set; }
+
+    public Vector3 NetworkVelocity => SimulatedVelocity;
+
+    public Vector3 CollisionVelocity => SimulatedVelocity;
+
+    public bool IsDashImpactActive =>
+        Runner != null &&
+        !DashImpactTimer.ExpiredOrNotRunning(Runner);
     
     [Networked, OnChangedRender(nameof(OnDashVersionChanged))]
     private int DashVersion { get; set; }
@@ -213,6 +256,8 @@ public class HexBallPlayerController :
 
     public override void Spawned()
     {
+        RegisterCollisionReferences();
+
         if (body == null)
         {
             Debug.LogError("HexBallPlayerController requires a Rigidbody reference.", this);
@@ -220,9 +265,6 @@ public class HexBallPlayerController :
         }
 
         ValidateSettings();
-        
-        if (Object.HasStateAuthority)
-            HasDashAbility = startWithDashAbility;
         
         RefreshGrowthState();
         ConfigurePhysicsForAuthority();
@@ -249,6 +291,7 @@ public class HexBallPlayerController :
 
     public override void Despawned(NetworkRunner runner, bool hasState)
     {
+        UnregisterCollisionReferences();
         UnregisterLocalInput();
     }
 
@@ -294,6 +337,9 @@ public class HexBallPlayerController :
         if (IsEliminated)
         {
             StopBodyMotion();
+            SimulatedVelocity = Vector3.zero;
+            VelocitySampleSimulationTime =
+                Runner.SimulationTime;
             return;
         }
 
@@ -344,7 +390,13 @@ public class HexBallPlayerController :
             TryDash(input.Move);
 
         Move(input.Move, Runner.DeltaTime);
+        ApplyPendingImpactCorrection(Runner.DeltaTime);
+        TryPredictUpcomingPlayerImpact();
         UpdatePhysicalRolling();
+        SimulatedVelocity = body.linearVelocity;
+        VelocitySampleSimulationTime =
+            Runner.SimulationTime;
+        CleanupExpiredPredictedImpacts();
 
         if (!waitingForMatchStart)
             TryCaptureCurrentHex();
@@ -358,6 +410,8 @@ public class HexBallPlayerController :
 
     public void InitializeSpawnTransform(Vector3 spawnPosition, Quaternion spawnRotation)
     {
+        ResetImpactPredictionState();
+
         if (body != null)
         {
             body.position = spawnPosition;
@@ -459,6 +513,12 @@ public class HexBallPlayerController :
                 this
             );
 
+        if (abilityController == null)
+            Debug.LogError(
+                "HexBallPlayerController: Ability Controller is not assigned.",
+                this
+            );
+
         if (cameraRig == null)
             Debug.LogError(
                 "HexBallPlayerController: Camera Rig is not assigned.",
@@ -493,6 +553,8 @@ public class HexBallPlayerController :
 
     private void Move(Vector2 moveInput, float deltaTime)
     {
+        UpdateImpactRecovery(deltaTime);
+
         float deadZone = Mathf.Clamp(inputDeadZone, 0f, 0.5f);
 
         if (moveInput.sqrMagnitude < deadZone * deadZone)
@@ -508,6 +570,7 @@ public class HexBallPlayerController :
         float response = desiredDirection.sqrMagnitude > 0f
             ? Mathf.Max(0.1f, currentAcceleration)
             : Mathf.Max(0.1f, currentBraking);
+        response *= GetImpactControlMultiplier();
 
         float safeDeltaTime = Mathf.Max(0.0001f, deltaTime);
         Vector3 requestedAcceleration =
@@ -518,7 +581,11 @@ public class HexBallPlayerController :
             ForceMode.Acceleration
         );
 
-        ClampPlanarSpeed(currentVelocity.y);
+        ClampPlanarSpeed(
+            currentVelocity.y,
+            Mathf.Max(0.1f, GetActiveMaximumSpeed()) +
+            impactSpeedAllowance
+        );
     }
 
     private void TryJump(bool grounded)
@@ -529,8 +596,18 @@ public class HexBallPlayerController :
         if (!grounded && jumpsUsed == 0)
             jumpsUsed = 1;
 
-        if (jumpsUsed >= Mathf.Max(1, maxJumpCount))
+        bool isDoubleJump = jumpsUsed >= 1;
+
+        if (jumpsUsed >= 2)
             return;
+
+        if (isDoubleJump &&
+            (abilityController == null ||
+             !abilityController.TryConsumeAbility(
+                 HexPlayerAbilityType.DoubleJump)))
+        {
+            return;
+        }
 
         jumpsUsed++;
 
@@ -538,7 +615,7 @@ public class HexBallPlayerController :
         velocity.y = Mathf.Max(0.1f, jumpSpeed);
         body.linearVelocity = velocity;
 
-        if (jumpsUsed >= 2)
+        if (isDoubleJump)
             DoubleJumpVersion++;
         else
             JumpVersion++;
@@ -546,9 +623,6 @@ public class HexBallPlayerController :
 
     private void TryDash(Vector2 moveInput)
     {
-        if (!HasDashAbility)
-            return;
-        
         if (!dashCooldownTimer.ExpiredOrNotRunning(Runner))
             return;
         
@@ -556,6 +630,13 @@ public class HexBallPlayerController :
         
         if (dashDirection.sqrMagnitude <= 0.001f)
             return;
+
+        if (abilityController == null ||
+            !abilityController.TryConsumeAbility(
+                HexPlayerAbilityType.Dash))
+        {
+            return;
+        }
         
         Vector3 currentVelocity = body.linearVelocity;
         Vector3 dashVelocity = dashDirection.normalized * dashSpeed;
@@ -577,6 +658,10 @@ public class HexBallPlayerController :
         dashCooldownTimer = TickTimer.CreateFromSeconds(
             Runner,
             Mathf.Max(0.05f, dashCooldownSeconds)
+        );
+        DashImpactTimer = TickTimer.CreateFromSeconds(
+            Runner,
+            Mathf.Max(0.05f, dashBoostDuration)
         );
         
         LastDashDirection = dashDirection.normalized;
@@ -632,10 +717,14 @@ public class HexBallPlayerController :
 
     public void GiveDashAbility()
     {
-        if (Object == null || !Object.HasStateAuthority)
-            return;
-        
-        HasDashAbility = true;
+        TryGrantAbility(HexPlayerAbilityType.Dash);
+    }
+
+    public bool TryGrantAbility(
+        HexPlayerAbilityType abilityType)
+    {
+        return abilityController != null &&
+               abilityController.TryGrantAbility(abilityType);
     }
     
     public void ApplyTrampolineLaunch(Vector3 fallbackDirection, float verticalSpeed,
@@ -674,7 +763,7 @@ public class HexBallPlayerController :
         body.linearVelocity = new Vector3(
             boostedPlanarVelocity.x, Mathf.Max(0.1f, verticalSpeed), boostedPlanarVelocity.z);
         
-        jumpsUsed = Mathf.Max(0, maxJumpCount - 1);
+        jumpsUsed = 1;
         
         TrampolineVersion++;
     }
@@ -787,7 +876,11 @@ public class HexBallPlayerController :
             Runner,
             Mathf.Max(0.05f, captureRetrySeconds)
         );
-        territoryManager.RequestCapture(coordinate);
+        territoryManager.RequestCapture(
+            coordinate,
+            body.position,
+            true
+        );
     }
 
     private void RememberSafeHexAtPosition(
@@ -847,6 +940,355 @@ public class HexBallPlayerController :
         combatManager.RequestContact(otherPlayerRef);
     }
 
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (!CanInteractWithPlayerCollision(
+                collision,
+                out HexBallPlayerController otherPlayer))
+        {
+            return;
+        }
+
+        HexStrengthCombatManager combatManager = GetCombatManager();
+
+        if (combatManager != null)
+        {
+            PlayerRef otherPlayerRef =
+                otherPlayer.Object.InputAuthority;
+
+            if (IsLocalImpactOnCooldown(otherPlayerRef))
+                return;
+
+            Vector3 directionToOther =
+                otherPlayer.transform.position -
+                transform.position;
+            directionToOther.y = 0f;
+            Vector3 reportedVelocity = CollisionVelocity;
+            bool isDashing = IsDashImpactActive;
+            int impactSequence = CreateImpactSequence();
+
+            TryApplyPredictedImpact(
+                otherPlayer,
+                directionToOther,
+                reportedVelocity,
+                isDashing,
+                impactSequence
+            );
+
+            combatManager.RequestImpact(
+                otherPlayerRef,
+                body.position,
+                reportedVelocity,
+                directionToOther,
+                isDashing,
+                impactSequence
+            );
+        }
+    }
+
+    private void TryPredictUpcomingPlayerImpact()
+    {
+        HexPlayerCollisionSettings settings =
+            GetCollisionSettings();
+
+        if (settings == null ||
+            !settings.EnableEarlyCollisionPrediction ||
+            body == null ||
+            bodyCollider == null ||
+            !bodyCollider.enabled ||
+            Object == null ||
+            !Object.HasStateAuthority ||
+            Runner == null ||
+            IsEliminated)
+        {
+            return;
+        }
+
+        GameSceneManager sceneManager =
+            GameSceneManager.Instance;
+
+        if (sceneManager != null &&
+            (!sceneManager.IsMatchStarted ||
+             sceneManager.IsGameEnded))
+        {
+            return;
+        }
+
+        HexBallPlayerController earliestPlayer = null;
+        Vector3 earliestDirection = Vector3.zero;
+        float earliestImpactTime = float.PositiveInfinity;
+
+        foreach (HexBallPlayerController otherPlayer in ActivePlayers)
+        {
+            if (!CanPredictImpactWith(otherPlayer) ||
+                IsLocalImpactOnCooldown(
+                    otherPlayer.Object.InputAuthority) ||
+                !TryCalculatePredictedImpact(
+                    otherPlayer,
+                    settings,
+                    out float impactTime,
+                    out Vector3 directionToOther) ||
+                impactTime >= earliestImpactTime)
+            {
+                continue;
+            }
+
+            earliestPlayer = otherPlayer;
+            earliestDirection = directionToOther;
+            earliestImpactTime = impactTime;
+        }
+
+        if (earliestPlayer == null)
+            return;
+
+        TrySubmitEarlyPredictedImpact(
+            earliestPlayer,
+            earliestDirection
+        );
+    }
+
+    private bool CanPredictImpactWith(
+        HexBallPlayerController otherPlayer)
+    {
+        return otherPlayer != null &&
+               otherPlayer != this &&
+               otherPlayer.isActiveAndEnabled &&
+               otherPlayer.body != null &&
+               otherPlayer.bodyCollider != null &&
+               otherPlayer.bodyCollider.enabled &&
+               otherPlayer.Object != null &&
+               otherPlayer.Runner == Runner &&
+               otherPlayer.Object.InputAuthority != PlayerRef.None &&
+               Object.InputAuthority !=
+               otherPlayer.Object.InputAuthority &&
+               !otherPlayer.IsEliminated;
+    }
+
+    private bool TryCalculatePredictedImpact(
+        HexBallPlayerController otherPlayer,
+        HexPlayerCollisionSettings settings,
+        out float impactTime,
+        out Vector3 directionToOther)
+    {
+        impactTime = 0f;
+        directionToOther = Vector3.zero;
+
+        float ownRadius = CollisionRadius;
+        float otherRadius = otherPlayer.CollisionRadius;
+
+        if (ownRadius <= 0f || otherRadius <= 0f)
+            return false;
+
+        Vector3 ownVelocity = body.linearVelocity;
+        Vector3 otherVelocity = otherPlayer.CollisionVelocity;
+        float extrapolationSeconds =
+            GetRemoteExtrapolationSeconds(
+                settings,
+                otherPlayer
+            );
+        Vector3 predictedOtherPosition =
+            otherPlayer.body.position +
+            otherVelocity * extrapolationSeconds;
+        Vector3 relativePosition =
+            predictedOtherPosition - body.position;
+        Vector3 relativeVelocity =
+            otherVelocity - ownVelocity;
+        float combinedRadius =
+            ownRadius +
+            otherRadius +
+            settings.PredictionContactPadding;
+        float radiusSquared =
+            combinedRadius * combinedRadius;
+        float relativeSpeedSquared =
+            relativeVelocity.sqrMagnitude;
+
+        if (relativeSpeedSquared <= 0.0001f)
+            return false;
+
+        float positionVelocityDot =
+            Vector3.Dot(relativePosition, relativeVelocity);
+        float minimumPredictiveClosingSpeed =
+            Mathf.Max(0.05f, settings.MinimumImpactSpeed);
+        float separationDistance =
+            Mathf.Max(0.0001f, relativePosition.magnitude);
+        float closingSpeed =
+            -positionVelocityDot / separationDistance;
+
+        if (closingSpeed < minimumPredictiveClosingSpeed)
+            return false;
+
+        float distanceFromContact =
+            relativePosition.sqrMagnitude - radiusSquared;
+
+        if (distanceFromContact <= 0f)
+        {
+            impactTime = 0f;
+        }
+        else
+        {
+            float quadraticB = 2f * positionVelocityDot;
+            float discriminant =
+                quadraticB * quadraticB -
+                4f *
+                relativeSpeedSquared *
+                distanceFromContact;
+
+            if (discriminant < 0f)
+                return false;
+
+            impactTime =
+                (-quadraticB - Mathf.Sqrt(discriminant)) /
+                (2f * relativeSpeedSquared);
+
+            if (impactTime < 0f ||
+                impactTime > settings.CollisionLookAheadSeconds)
+            {
+                return false;
+            }
+        }
+
+        Vector3 predictedSeparation =
+            relativePosition +
+            relativeVelocity * impactTime;
+        predictedSeparation.y = 0f;
+
+        if (predictedSeparation.sqrMagnitude <= 0.0001f)
+        {
+            predictedSeparation =
+                otherPlayer.transform.position -
+                transform.position;
+            predictedSeparation.y = 0f;
+        }
+
+        if (predictedSeparation.sqrMagnitude <= 0.0001f)
+            return false;
+
+        directionToOther = predictedSeparation.normalized;
+        return true;
+    }
+
+    private float GetRemoteExtrapolationSeconds(
+        HexPlayerCollisionSettings settings,
+        HexBallPlayerController otherPlayer)
+    {
+        if (settings == null)
+            return 0f;
+
+        float extrapolationSeconds =
+            settings.MinimumRemoteExtrapolationSeconds;
+        bool usedNetworkStateAge = false;
+
+        if (settings.UseNetworkStateAgeForExtrapolation &&
+            Runner != null &&
+            otherPlayer != null &&
+            otherPlayer.VelocitySampleSimulationTime > 0f)
+        {
+            float stateAgeSeconds =
+                Runner.SimulationTime -
+                otherPlayer.VelocitySampleSimulationTime;
+
+            if (stateAgeSeconds >= 0f)
+            {
+                extrapolationSeconds =
+                    stateAgeSeconds *
+                    settings.NetworkStateAgeMultiplier;
+                usedNetworkStateAge = true;
+            }
+        }
+
+        if (!usedNetworkStateAge &&
+            settings.UseRttForRemoteExtrapolation &&
+            Runner != null)
+        {
+            double measuredRtt =
+                Runner.GetPlayerRtt(PlayerRef.None);
+
+            if (!double.IsNaN(measuredRtt) &&
+                !double.IsInfinity(measuredRtt) &&
+                measuredRtt > 0.0)
+            {
+                extrapolationSeconds =
+                    (float)measuredRtt *
+                    settings.RttExtrapolationMultiplier;
+            }
+        }
+
+        return Mathf.Clamp(
+            extrapolationSeconds,
+            settings.MinimumRemoteExtrapolationSeconds,
+            settings.MaximumRemoteExtrapolationSeconds
+        );
+    }
+
+    private bool TrySubmitEarlyPredictedImpact(
+        HexBallPlayerController otherPlayer,
+        Vector3 directionToOther)
+    {
+        HexStrengthCombatManager combatManager =
+            GetCombatManager();
+
+        if (combatManager == null ||
+            otherPlayer == null ||
+            otherPlayer.Object == null)
+        {
+            return false;
+        }
+
+        PlayerRef otherPlayerRef =
+            otherPlayer.Object.InputAuthority;
+        Vector3 reportedVelocity = body.linearVelocity;
+        bool isDashing = IsDashImpactActive;
+        int impactSequence = CreateImpactSequence();
+
+        if (!TryApplyPredictedImpact(
+                otherPlayer,
+                directionToOther,
+                reportedVelocity,
+                isDashing,
+                impactSequence))
+        {
+            return false;
+        }
+
+        combatManager.RequestImpact(
+            otherPlayerRef,
+            body.position,
+            reportedVelocity,
+            directionToOther,
+            isDashing,
+            impactSequence
+        );
+        return true;
+    }
+
+    private bool IsLocalImpactOnCooldown(
+        PlayerRef otherPlayer)
+    {
+        return otherPlayer != PlayerRef.None &&
+               localImpactCooldownExpiryTimes.TryGetValue(
+                   otherPlayer.PlayerId,
+                   out float cooldownExpiryTime) &&
+               Time.unscaledTime < cooldownExpiryTime;
+    }
+
+    private bool CanInteractWithPlayerCollision(
+        Collision collision,
+        out HexBallPlayerController otherPlayer)
+    {
+        otherPlayer = null;
+
+        return Object != null &&
+               Object.HasStateAuthority &&
+               (GameSceneManager.Instance == null ||
+                GameSceneManager.Instance.IsMatchStarted) &&
+               !IsEliminated &&
+               collision != null &&
+               TryResolvePlayer(collision.collider, out otherPlayer) &&
+               otherPlayer != this &&
+               otherPlayer.Object != null &&
+               !otherPlayer.IsEliminated;
+    }
+
     public static bool TryResolvePlayer(
         Collider sourceCollider,
         out HexBallPlayerController player)
@@ -869,43 +1311,32 @@ public class HexBallPlayerController :
                player != null;
     }
 
-    public void RequestMassPush(
-        Vector3 direction,
-        float pushingMass,
-        float durationSeconds)
+    public void RequestResolvedImpactVelocity(
+        PlayerRef otherPlayer,
+        int predictionSequence,
+        Vector3 resolvedPlanarVelocity,
+        float verticalLift,
+        bool isRejection)
     {
-        HexPlayerGrowthSettings settings = GetGrowthSettings();
-        float ownMass = CurrentMass;
-
-        if (settings == null ||
-            Object == null ||
-            IsEliminated ||
-            ownMass <= 0f ||
-            pushingMass / ownMass < settings.MinimumMassRatioToPush)
-        {
-            return;
-        }
-
-        direction.y = 0f;
-
-        if (direction.sqrMagnitude <= 0.0001f)
+        if (Object == null || IsEliminated)
             return;
 
-        float normalizedMassAdvantage =
-            1f - Mathf.Clamp01(ownMass / pushingMass);
-        float velocityChange =
-            settings.MaximumPushVelocityChangePerSecond *
-            normalizedMassAdvantage *
-            Mathf.Max(0f, durationSeconds);
-
-        if (velocityChange <= 0f)
-            return;
-
-        RPC_ApplyMassPush(direction.normalized * velocityChange);
+        RPC_ApplyResolvedImpactVelocity(
+            otherPlayer,
+            predictionSequence,
+            resolvedPlanarVelocity,
+            verticalLift,
+            isRejection
+        );
     }
 
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-    private void RPC_ApplyMassPush(Vector3 velocityChange)
+    private void RPC_ApplyResolvedImpactVelocity(
+        PlayerRef otherPlayer,
+        int predictionSequence,
+        Vector3 resolvedPlanarVelocity,
+        float verticalLift,
+        bool isRejection)
     {
         if (body == null ||
             Object == null ||
@@ -915,8 +1346,266 @@ public class HexBallPlayerController :
             return;
         }
 
-        velocityChange.y = 0f;
-        body.AddForce(velocityChange, ForceMode.VelocityChange);
+        HexPlayerCollisionSettings settings = GetCollisionSettings();
+
+        if (settings == null)
+            return;
+
+        if (predictionSequence > 0 &&
+            predictedImpacts.TryGetValue(
+                predictionSequence,
+                out LocalPredictedImpact predictedImpact) &&
+            predictedImpact.OtherPlayer == otherPlayer &&
+            Time.unscaledTime <= predictedImpact.ExpiryTime)
+        {
+            Vector3 correction = new Vector3(
+                resolvedPlanarVelocity.x -
+                predictedImpact.ResolvedPlanarVelocity.x,
+                Mathf.Max(0f, verticalLift) -
+                predictedImpact.VerticalLift,
+                resolvedPlanarVelocity.z -
+                predictedImpact.ResolvedPlanarVelocity.z
+            );
+            correction = Vector3.ClampMagnitude(
+                correction,
+                settings.MaximumReconciliationVelocityChange
+            );
+            QueueImpactCorrection(
+                correction,
+                settings.ReconciliationSeconds
+            );
+            predictedImpacts.Remove(predictionSequence);
+            StartImpactRecovery(body.linearVelocity + correction);
+            return;
+        }
+
+        if (isRejection)
+            return;
+
+        RemovePredictedImpactsForOther(otherPlayer);
+
+        Vector3 currentVelocity = body.linearVelocity;
+        Vector3 resolvedVelocity = new Vector3(
+            resolvedPlanarVelocity.x,
+            currentVelocity.y + Mathf.Max(0f, verticalLift),
+            resolvedPlanarVelocity.z
+        );
+        body.linearVelocity = resolvedVelocity;
+        SimulatedVelocity = resolvedVelocity;
+        StartImpactRecovery(resolvedVelocity);
+    }
+
+    private void StartImpactRecovery(Vector3 resolvedVelocity)
+    {
+        HexPlayerCollisionSettings settings = GetCollisionSettings();
+
+        if (settings == null)
+            return;
+
+        float activeMaximumSpeed =
+            Mathf.Max(0.1f, GetActiveMaximumSpeed());
+        Vector3 appliedPlanarVelocity =
+            new Vector3(resolvedVelocity.x, 0f, resolvedVelocity.z);
+        impactSpeedAllowance = Mathf.Max(
+            impactSpeedAllowance,
+            Mathf.Max(
+                0f,
+                appliedPlanarVelocity.magnitude - activeMaximumSpeed
+            )
+        );
+        impactSpeedAllowanceDecay =
+            impactSpeedAllowance /
+            settings.ControlRecoverySeconds;
+        impactRecoveryTimer = TickTimer.CreateFromSeconds(
+            Runner,
+            settings.ControlRecoverySeconds
+        );
+    }
+
+    private bool TryApplyPredictedImpact(
+        HexBallPlayerController otherPlayer,
+        Vector3 directionToOther,
+        Vector3 reportedVelocity,
+        bool isDashing,
+        int impactSequence)
+    {
+        HexPlayerCollisionSettings settings =
+            GetCollisionSettings();
+
+        if (settings == null ||
+            otherPlayer == null ||
+            otherPlayer.Object == null ||
+            impactSequence <= 0)
+        {
+            return false;
+        }
+
+        int otherPlayerId =
+            otherPlayer.Object.InputAuthority.PlayerId;
+
+        if (localImpactCooldownExpiryTimes.TryGetValue(
+                otherPlayerId,
+                out float cooldownExpiryTime) &&
+            Time.unscaledTime < cooldownExpiryTime)
+        {
+            return false;
+        }
+
+        if (
+            !HexPlayerImpactResolver.TryResolve(
+                settings,
+                reportedVelocity,
+                otherPlayer.CollisionVelocity,
+                directionToOther,
+                CurrentMass,
+                otherPlayer.CurrentMass,
+                isDashing,
+                otherPlayer.IsDashImpactActive,
+                out Vector3 resolvedPlanarVelocity,
+                out _,
+                out float verticalLift))
+        {
+            return false;
+        }
+
+        Vector3 currentVelocity = body.linearVelocity;
+        Vector3 predictedVelocity = new Vector3(
+            resolvedPlanarVelocity.x,
+            currentVelocity.y + verticalLift,
+            resolvedPlanarVelocity.z
+        );
+        body.linearVelocity = predictedVelocity;
+        SimulatedVelocity = predictedVelocity;
+        predictedImpacts[impactSequence] =
+            new LocalPredictedImpact
+            {
+                OtherPlayer =
+                    otherPlayer.Object.InputAuthority,
+                ResolvedPlanarVelocity =
+                    resolvedPlanarVelocity,
+                VerticalLift = verticalLift,
+                ExpiryTime =
+                    Time.unscaledTime +
+                    settings.PredictionLifetimeSeconds
+            };
+        localImpactCooldownExpiryTimes[otherPlayerId] =
+            Time.unscaledTime +
+            Mathf.Max(
+                settings.ImpactCooldownSeconds,
+                settings.PredictiveContactSuppressionSeconds
+            );
+        StartImpactRecovery(predictedVelocity);
+        return true;
+    }
+
+    private int CreateImpactSequence()
+    {
+        nextImpactSequence++;
+
+        if (nextImpactSequence <= 0)
+            nextImpactSequence = 1;
+
+        return nextImpactSequence;
+    }
+
+    private void QueueImpactCorrection(
+        Vector3 correction,
+        float durationSeconds)
+    {
+        HexPlayerCollisionSettings settings =
+            GetCollisionSettings();
+
+        if (settings == null ||
+            correction.sqrMagnitude <= 0.000001f)
+        {
+            return;
+        }
+
+        pendingImpactVelocityCorrection =
+            Vector3.ClampMagnitude(
+                pendingImpactVelocityCorrection +
+                correction,
+                settings.MaximumReconciliationVelocityChange
+            );
+        impactCorrectionTimeRemaining = Mathf.Max(
+            impactCorrectionTimeRemaining,
+            Mathf.Max(0.01f, durationSeconds)
+        );
+    }
+
+    private void ApplyPendingImpactCorrection(float deltaTime)
+    {
+        if (pendingImpactVelocityCorrection.sqrMagnitude <=
+                0.000001f ||
+            impactCorrectionTimeRemaining <= 0f)
+        {
+            pendingImpactVelocityCorrection = Vector3.zero;
+            impactCorrectionTimeRemaining = 0f;
+            return;
+        }
+
+        float safeDeltaTime = Mathf.Max(0.0001f, deltaTime);
+        float appliedFraction = Mathf.Clamp01(
+            safeDeltaTime /
+            Mathf.Max(safeDeltaTime, impactCorrectionTimeRemaining)
+        );
+        Vector3 correctionStep =
+            pendingImpactVelocityCorrection *
+            appliedFraction;
+        body.linearVelocity += correctionStep;
+        pendingImpactVelocityCorrection -= correctionStep;
+        impactCorrectionTimeRemaining -= safeDeltaTime;
+
+        if (impactCorrectionTimeRemaining <= 0f)
+        {
+            body.linearVelocity +=
+                pendingImpactVelocityCorrection;
+            pendingImpactVelocityCorrection = Vector3.zero;
+            impactCorrectionTimeRemaining = 0f;
+        }
+    }
+
+    private void CleanupExpiredPredictedImpacts()
+    {
+        if (predictedImpacts.Count == 0)
+            return;
+
+        predictedImpactKeysToRemove.Clear();
+
+        foreach (KeyValuePair<int, LocalPredictedImpact> pair
+                 in predictedImpacts)
+        {
+            if (pair.Value == null ||
+                Time.unscaledTime > pair.Value.ExpiryTime)
+            {
+                predictedImpactKeysToRemove.Add(pair.Key);
+            }
+        }
+
+        foreach (int predictionKey in predictedImpactKeysToRemove)
+            predictedImpacts.Remove(predictionKey);
+    }
+
+    private void RemovePredictedImpactsForOther(
+        PlayerRef otherPlayer)
+    {
+        if (predictedImpacts.Count == 0)
+            return;
+
+        predictedImpactKeysToRemove.Clear();
+
+        foreach (KeyValuePair<int, LocalPredictedImpact> pair
+                 in predictedImpacts)
+        {
+            if (pair.Value == null ||
+                pair.Value.OtherPlayer == otherPlayer)
+            {
+                predictedImpactKeysToRemove.Add(pair.Key);
+            }
+        }
+
+        foreach (int predictionKey in predictedImpactKeysToRemove)
+            predictedImpacts.Remove(predictionKey);
     }
 
     private void ConfigurePhysicsForAuthority()
@@ -1006,11 +1695,38 @@ public class HexBallPlayerController :
         }
     }
 
-    private void ClampPlanarSpeed(float verticalVelocity)
+    private float GetImpactControlMultiplier()
+    {
+        if (impactRecoveryTimer.ExpiredOrNotRunning(Runner))
+            return 1f;
+
+        HexPlayerCollisionSettings settings = GetCollisionSettings();
+
+        return settings != null
+            ? settings.ControlMultiplierDuringRecovery
+            : 1f;
+    }
+
+    private void UpdateImpactRecovery(float deltaTime)
+    {
+        if (impactSpeedAllowance <= 0f)
+            return;
+
+        impactSpeedAllowance = Mathf.MoveTowards(
+            impactSpeedAllowance,
+            0f,
+            Mathf.Max(0f, impactSpeedAllowanceDecay) *
+            Mathf.Max(0f, deltaTime)
+        );
+    }
+
+    private void ClampPlanarSpeed(
+        float verticalVelocity,
+        float speedLimit)
     {
         Vector3 velocity = body.linearVelocity;
         Vector3 planarVelocity = new Vector3(velocity.x, 0f, velocity.z);
-        float speedLimit = Mathf.Max(0.1f, GetActiveMaximumSpeed());
+        speedLimit = Mathf.Max(0.1f, speedLimit);
         if (planarVelocity.sqrMagnitude <= speedLimit * speedLimit)
             return;
 
@@ -1073,6 +1789,7 @@ public class HexBallPlayerController :
 
         if (isEliminated)
         {
+            ResetImpactPredictionState();
             StopBodyMotion();
 
             if (body != null)
@@ -1102,8 +1819,22 @@ public class HexBallPlayerController :
         body.angularVelocity = Vector3.zero;
     }
 
+    private void ResetImpactPredictionState()
+    {
+        predictedImpacts.Clear();
+        predictedImpactKeysToRemove.Clear();
+        localImpactCooldownExpiryTimes.Clear();
+        pendingImpactVelocityCorrection = Vector3.zero;
+        impactCorrectionTimeRemaining = 0f;
+        impactSpeedAllowance = 0f;
+        impactSpeedAllowanceDecay = 0f;
+        impactRecoveryTimer = default;
+    }
+
     private void RegisterCollisionReferences()
     {
+        ActivePlayers.Add(this);
+
         if (bodyCollider != null)
             PlayersByCollider[bodyCollider] = this;
 
@@ -1113,6 +1844,8 @@ public class HexBallPlayerController :
 
     private void UnregisterCollisionReferences()
     {
+        ActivePlayers.Remove(this);
+
         if (bodyCollider != null &&
             PlayersByCollider.TryGetValue(
                 bodyCollider,
@@ -1157,6 +1890,13 @@ public class HexBallPlayerController :
     {
         return GameSceneManager.Instance != null
             ? GameSceneManager.Instance.GameRulesSettings
+            : null;
+    }
+
+    private static HexPlayerCollisionSettings GetCollisionSettings()
+    {
+        return GameSceneManager.Instance != null
+            ? GameSceneManager.Instance.PlayerCollisionSettings
             : null;
     }
 

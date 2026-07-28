@@ -29,7 +29,7 @@ public class AvatarSelectionManager : NetworkBehaviour
         {
             selectionUI.Init(this);
             selectionUI.Refresh(OccupiedAvatarMask, LocalAvatarIndex);
-            selectionUI.Show();
+            selectionUI.Hide();
         }
     }
 
@@ -106,6 +106,8 @@ public class AvatarSelectionManager : NetworkBehaviour
         selectionUI?.SetStatus($"Selected: {GetAvatarName(avatarIndex)}");
 
         TryApplyLocalAvatar();
+        selectionUI?.Hide();
+        GameSceneManager.Instance?.NotifyLocalAvatarSelectionApproved();
     }
 
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
@@ -157,6 +159,18 @@ public class AvatarSelectionManager : NetworkBehaviour
     public void HideSelectionUI()
     {
         selectionUI?.Hide();
+    }
+
+    public void ShowSelectionUI()
+    {
+        if (selectionUI == null)
+            return;
+
+        selectionUI.Refresh(
+            OccupiedAvatarMask,
+            LocalAvatarIndex
+        );
+        selectionUI.Show();
     }
 
     private void TryApplyLocalAvatar()

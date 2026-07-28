@@ -12,5 +12,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 41ac0baaf33847f2928f7e1f922bdfcc, type: 3}
   m_Name: HexGameRulesSettings
   m_EditorClassIdentifier: Assembly-CSharp::HexGameRulesSettings
+  matchDurationSeconds: 150
   loseStrengthWhenHexIsStolen: 0
   disablePhysicalRolling: 0

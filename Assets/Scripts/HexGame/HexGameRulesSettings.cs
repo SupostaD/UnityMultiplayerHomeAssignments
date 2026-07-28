@@ -5,6 +5,11 @@ using UnityEngine;
     menuName = "Hex Game/Game Rules Settings")]
 public sealed class HexGameRulesSettings : ScriptableObject
 {
+    [Header("Match Rules")]
+    [SerializeField, Min(10f)]
+    [Tooltip("Match duration in seconds. 150 seconds equals 2 minutes 30 seconds.")]
+    private float matchDurationSeconds = 150f;
+
     [Header("Territory Rules")]
     [SerializeField]
     private bool loseStrengthWhenHexIsStolen = true;
@@ -25,6 +30,9 @@ public sealed class HexGameRulesSettings : ScriptableObject
 
     public bool LoseStrengthWhenHexIsStolen =>
         loseStrengthWhenHexIsStolen;
+
+    public float MatchDurationSeconds =>
+        Mathf.Max(10f, matchDurationSeconds);
 
     public bool DisablePhysicalRolling =>
         disablePhysicalRolling;

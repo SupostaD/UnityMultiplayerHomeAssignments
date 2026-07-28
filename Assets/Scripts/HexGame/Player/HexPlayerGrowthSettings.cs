@@ -24,17 +24,6 @@ public sealed class HexPlayerGrowthSettings : ScriptableObject
     [SerializeField, Min(0.01f)] private float minimumSizeMass = 1f;
     [SerializeField, Min(0f)] private float massScaleExponent = 1f;
 
-    [Header("Pushing Other Players")]
-    [SerializeField, Min(0f)]
-    private float maximumPushVelocityChangePerSecond = 5f;
-    [SerializeField, Min(1f)] private float minimumMassRatioToPush = 1f;
-
-    public float MaximumPushVelocityChangePerSecond =>
-        Mathf.Max(0f, maximumPushVelocityChangePerSecond);
-
-    public float MinimumMassRatioToPush =>
-        Mathf.Max(1f, minimumMassRatioToPush);
-
     public float EvaluateGrowthProgress(int territoryCount)
     {
         return Mathf.Clamp01(

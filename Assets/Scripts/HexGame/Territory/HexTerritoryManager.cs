@@ -55,6 +55,11 @@ public class HexTerritoryManager : NetworkBehaviour
 
     private readonly int[] renderedOwnerKeys = new int[MaximumNetworkedTiles];
     private readonly int[] renderedCharacterIndices = new int[MaximumNetworkedTiles];
+    private readonly int[] predictedOwnerKeys = new int[MaximumNetworkedTiles];
+    private readonly bool[] rejectedPredictedCaptures =
+        new bool[MaximumNetworkedTiles];
+    private readonly float[] predictedCaptureExpiryTimes =
+        new float[MaximumNetworkedTiles];
     private readonly bool[] exteriorReachableTiles =
         new bool[MaximumNetworkedTiles];
     private readonly Queue<int> exteriorFloodQueue =
@@ -230,15 +235,24 @@ public class HexTerritoryManager : NetworkBehaviour
         return true;
     }
 
-    public void RequestCapture(HexCoord coordinate)
+    public void RequestCapture(
+        HexCoord coordinate,
+        Vector3 reportedPlayerPosition,
+        bool reportedGrounded)
     {
         if (Runner == null || Object == null)
             return;
 
+        PredictLocalCapture(
+            coordinate,
+            reportedPlayerPosition
+        );
         RPC_RequestCapture(
             coordinate.q,
             coordinate.r,
-            coordinate.layer
+            coordinate.layer,
+            reportedPlayerPosition,
+            reportedGrounded
         );
     }
 
@@ -285,6 +299,8 @@ public class HexTerritoryManager : NetworkBehaviour
         int q,
         int r,
         int layer,
+        Vector3 reportedPlayerPosition,
+        bool reportedGrounded,
         RpcInfo info = default)
     {
         PlayerRef requestingPlayer = info.Source;
@@ -297,9 +313,19 @@ public class HexTerritoryManager : NetworkBehaviour
         if (!TryValidateCapture(
                 requestingPlayer,
                 coordinate,
+                reportedPlayerPosition,
+                reportedGrounded,
                 out int tileIndex,
                 out Vector3 playerWorldPosition))
+        {
+            RPC_CaptureRejected(
+                requestingPlayer,
+                q,
+                r,
+                layer
+            );
             return;
+        }
 
         int newOwnerKey = EncodeOwner(requestingPlayer);
         int previousOwnerKey = TileOwnerKeys[tileIndex];
@@ -313,12 +339,24 @@ public class HexTerritoryManager : NetworkBehaviour
                 previousOwnerKey))
         {
             NeutralizeContestedTile(tileIndex, previousOwnerKey);
+            RPC_CaptureRejected(
+                requestingPlayer,
+                q,
+                r,
+                layer
+            );
             return;
         }
 
         if (!mapGenerator.TryGetTile(coordinate, out HexTile capturedTile) ||
             capturedTile == null)
         {
+            RPC_CaptureRejected(
+                requestingPlayer,
+                q,
+                r,
+                layer
+            );
             return;
         }
 
@@ -347,6 +385,28 @@ public class HexTerritoryManager : NetworkBehaviour
         ApplyStrengthDelta(requestingPlayer, 1f);
         CaptureEnclosedArea(requestingPlayer, newOwnerKey);
         UpdateTerritoryCount(requestingPlayer);
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_CaptureRejected(
+        [RpcTarget] PlayerRef targetPlayer,
+        int q,
+        int r,
+        int layer)
+    {
+        if (Runner == null ||
+            Runner.LocalPlayer != targetPlayer ||
+            mapGenerator == null ||
+            !mapGenerator.TryGetCoordinateIndex(
+                new HexCoord(q, r, layer),
+                out int tileIndex) ||
+            tileIndex < 0 ||
+            tileIndex >= MaximumNetworkedTiles)
+        {
+            return;
+        }
+
+        rejectedPredictedCaptures[tileIndex] = true;
     }
 
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
@@ -433,6 +493,8 @@ public class HexTerritoryManager : NetworkBehaviour
     private bool TryValidateCapture(
         PlayerRef requestingPlayer,
         HexCoord coordinate,
+        Vector3 reportedPlayerPosition,
+        bool reportedGrounded,
         out int tileIndex,
         out Vector3 playerWorldPosition)
     {
@@ -447,7 +509,8 @@ public class HexTerritoryManager : NetworkBehaviour
             return false;
         }
 
-        if (IsPlayerEliminated(requestingPlayer))
+        if (IsPlayerEliminated(requestingPlayer) ||
+            !reportedGrounded)
             return false;
 
         NetworkObject playerObject = Runner.GetPlayerObject(requestingPlayer);
@@ -455,9 +518,8 @@ public class HexTerritoryManager : NetworkBehaviour
         if (!NetworkObjectBehaviourReferences.TryGet(
                 playerObject,
                 out HexBallPlayerController playerController) ||
-            !playerController.IsTouchingGroundForCapture() ||
             !mapGenerator.TryWorldToCoordinate(
-                playerObject.transform.position,
+                reportedPlayerPosition,
                 out HexCoord validatedCoordinate) ||
             validatedCoordinate != coordinate)
         {
@@ -465,7 +527,7 @@ public class HexTerritoryManager : NetworkBehaviour
         }
 
         Vector3 tileCenter = mapGenerator.CoordinateToWorldPosition(coordinate);
-        Vector3 playerCenter = playerObject.transform.position;
+        Vector3 playerCenter = reportedPlayerPosition;
         playerWorldPosition = playerCenter;
         Vector2 planarDifference = new Vector2(
             playerCenter.x - tileCenter.x,
@@ -475,8 +537,23 @@ public class HexTerritoryManager : NetworkBehaviour
             mapGenerator.TileOuterRadius *
             Mathf.Max(1f, maximumCaptureDistanceInTileRadii);
 
-        return planarDifference.sqrMagnitude <=
-               maximumDistance * maximumDistance;
+        if (planarDifference.sqrMagnitude >
+            maximumDistance * maximumDistance)
+        {
+            return false;
+        }
+
+        Vector3 latestProxyPosition =
+            playerObject.transform.position;
+        Vector2 reportedDrift = new Vector2(
+            playerCenter.x - latestProxyPosition.x,
+            playerCenter.z - latestProxyPosition.z
+        );
+        float maximumReportedDrift =
+            captureSettings.MaximumReportedPositionDrift;
+
+        return reportedDrift.sqrMagnitude <=
+               maximumReportedDrift * maximumReportedDrift;
     }
 
     private bool IsContestedCapture(
@@ -843,6 +920,33 @@ public class HexTerritoryManager : NetworkBehaviour
             int characterIndex = ownerKey == 0
                 ? -1
                 : GetCharacterIndex(ownerKey);
+            bool forceImmediateVisual = false;
+
+            if (predictedOwnerKeys[i] != 0)
+            {
+                if (ownerKey == predictedOwnerKeys[i])
+                {
+                    ClearPredictedCapture(i);
+                    renderedOwnerKeys[i] = ownerKey;
+                    renderedCharacterIndices[i] = characterIndex;
+                    continue;
+                }
+
+                bool predictionExpired =
+                    Time.unscaledTime >=
+                    predictedCaptureExpiryTimes[i];
+
+                if (!rejectedPredictedCaptures[i] &&
+                    !predictionExpired)
+                {
+                    continue;
+                }
+
+                ClearPredictedCapture(i);
+                renderedOwnerKeys[i] = int.MinValue;
+                renderedCharacterIndices[i] = int.MinValue;
+                forceImmediateVisual = true;
+            }
 
             if (visualsInitialized &&
                 renderedOwnerKeys[i] == ownerKey &&
@@ -874,7 +978,8 @@ public class HexTerritoryManager : NetworkBehaviour
             bool ownerChanged =
                 renderedOwnerKeys[i] != ownerKey;
 
-            if (!animateChanges ||
+            if (forceImmediateVisual ||
+                !animateChanges ||
                 !visualsInitialized ||
                 !ownerChanged ||
                 ownerKey == 0)
@@ -908,6 +1013,67 @@ public class HexTerritoryManager : NetworkBehaviour
         }
 
         visualsInitialized = true;
+    }
+
+    private void PredictLocalCapture(
+        HexCoord coordinate,
+        Vector3 reportedPlayerPosition)
+    {
+        if (Runner == null ||
+            captureSettings == null ||
+            mapGenerator == null ||
+            Runner.LocalPlayer == PlayerRef.None ||
+            !mapGenerator.TryGetCoordinateIndex(
+                coordinate,
+                out int tileIndex) ||
+            tileIndex < 0 ||
+            tileIndex >= GetUsableTileCount())
+        {
+            return;
+        }
+
+        int predictedOwnerKey =
+            EncodeOwner(Runner.LocalPlayer);
+
+        if (predictedOwnerKeys[tileIndex] == predictedOwnerKey ||
+            TileOwnerKeys[tileIndex] == predictedOwnerKey ||
+            !mapGenerator.TryGetTile(
+                coordinate,
+                out HexTile tile) ||
+            tile == null)
+        {
+            return;
+        }
+
+        int characterIndex =
+            GetCharacterIndex(predictedOwnerKey);
+        Color predictedColor =
+            GetPlayerColor(characterIndex);
+
+        tile.ConfigureCaptureVisual(captureSettings);
+        tile.CaptureFromPlayer(
+            predictedColor,
+            tile.WorldToCapturePoint(reportedPlayerPosition)
+        );
+
+        predictedOwnerKeys[tileIndex] = predictedOwnerKey;
+        rejectedPredictedCaptures[tileIndex] = false;
+        predictedCaptureExpiryTimes[tileIndex] =
+            Time.unscaledTime +
+            captureSettings.LocalPredictionTimeoutSeconds;
+    }
+
+    private void ClearPredictedCapture(int tileIndex)
+    {
+        if (tileIndex < 0 ||
+            tileIndex >= MaximumNetworkedTiles)
+        {
+            return;
+        }
+
+        predictedOwnerKeys[tileIndex] = 0;
+        rejectedPredictedCaptures[tileIndex] = false;
+        predictedCaptureExpiryTimes[tileIndex] = 0f;
     }
 
     private void SetTileOwner(
@@ -951,6 +1117,7 @@ public class HexTerritoryManager : NetworkBehaviour
         {
             renderedOwnerKeys[i] = int.MinValue;
             renderedCharacterIndices[i] = int.MinValue;
+            ClearPredictedCapture(i);
         }
     }
 

@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4c2d1bc5eaa94b6b8d5b7d4ca91c241f, type: 3}
+  m_Name: HexPlayerCollisionSettings
+  m_EditorClassIdentifier: Assembly-CSharp::HexPlayerCollisionSettings
+  restitution: 0.35
+  minimumImpactSpeed: 0
+  maximumVelocityChange: 7
+  impactCooldownSeconds: 0.18
+  reportCollectionSeconds: 0.06
+  pendingImpactLifetimeSeconds: 0.25
+  maximumReportedSpeed: 24
+  maximumReportPositionDrift: 4
+  predictionLifetimeSeconds: 1.25
+  reconciliationSeconds: 0.06
+  maximumReconciliationVelocityChange: 6
+  enableEarlyCollisionPrediction: 1
+  useNetworkStateAgeForExtrapolation: 1
+  networkStateAgeMultiplier: 1
+  useRttForRemoteExtrapolation: 1
+  rttExtrapolationMultiplier: 1.5
+  minimumRemoteExtrapolationSeconds: 0.03
+  maximumRemoteExtrapolationSeconds: 0.2
+  collisionLookAheadSeconds: 0.04
+  predictionContactPadding: 0.04
+  predictiveContactSuppressionSeconds: 0.2
+  controlMultiplierDuringRecovery: 0.3
+  controlRecoverySeconds: 0.28
+  dashImpactMultiplier: 1.65
+  verticalLiftPerImpactSpeed: 0.02
+  maximumVerticalLift: 0.35

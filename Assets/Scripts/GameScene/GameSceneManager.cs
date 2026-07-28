@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Text;
 using System.Threading.Tasks;
 using Fusion;
 using Fusion.Sockets;
@@ -25,6 +27,7 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     [Header("Game Settings")]
     [SerializeField] private HexPlayerGrowthSettings playerGrowthSettings;
     [SerializeField] private HexGameRulesSettings gameRulesSettings;
+    [SerializeField] private HexPlayerCollisionSettings playerCollisionSettings;
 
     [Header("Character Selection")] [SerializeField]
     private CharacterSelectionUI characterSelectionUI;
@@ -51,6 +54,7 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     [SerializeField] private GamePauseUI gamePauseUI;
     [SerializeField] private GameObject endGamePanel;
     [SerializeField] private TMP_Text endGameMessageText;
+    [SerializeField] private TMP_Text matchTimerText;
     [SerializeField] private int mainMenuSceneBuildIndex = 0;
 
     [Networked, OnChangedRender(nameof(OnOccupiedCharactersChanged))]
@@ -58,6 +62,15 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     [Networked, OnChangedRender(nameof(OnMatchStartedChanged))]
     private NetworkBool MatchStarted { get; set; }
+
+    [Networked]
+    private TickTimer MatchTimer { get; set; }
+
+    [Networked]
+    private NetworkString<_512> FinalResults { get; set; }
+
+    [Networked, OnChangedRender(nameof(OnMatchEndedChanged))]
+    private NetworkBool MatchEnded { get; set; }
 
     public static GameSceneManager Instance { get; private set; }
 
@@ -71,17 +84,23 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     private NetworkRunner runner;
     private NetworkObject localPlayerObject;
+    private int localCharacterIndex = -1;
+    private int localSpawnIndex = -1;
 
     private bool endGamePanelShown;
     private bool gameEnded;
     private bool isLeavingGameIntentionally;
 
-    public bool IsGameEnded => gameEnded;
+    public bool IsGameEnded => gameEnded || MatchEnded;
     public bool IsMatchStarted => MatchStarted;
     public HexTerritoryManager HexTerritory => hexTerritoryManager;
     public HexStrengthCombatManager HexStrengthCombat => hexStrengthCombatManager;
     public HexPlayerGrowthSettings PlayerGrowthSettings => playerGrowthSettings;
     public HexGameRulesSettings GameRulesSettings => gameRulesSettings;
+    public HexPlayerCollisionSettings PlayerCollisionSettings =>
+        playerCollisionSettings;
+    public NetworkRunner ActiveRunner =>
+        runner != null ? runner : Runner;
 
     private void Awake()
     {
@@ -114,6 +133,12 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
                 this
             );
 
+        if (playerCollisionSettings == null)
+            Debug.LogError(
+                "GameSceneManager: Player Collision Settings is not assigned.",
+                this
+            );
+
         if (islandSpawnCoordinates == null ||
             islandSpawnCoordinates.Length != IslandSpawnCount)
         {
@@ -121,6 +146,17 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
                 $"GameSceneManager: Island Spawn Coordinates must contain exactly {IslandSpawnCount} coordinates.",
                 this
             );
+        }
+
+        if (endGameUI != null &&
+            endGameButton ==
+            endGameUI.ExitToMainMenuButton)
+        {
+            Debug.LogError(
+                "GameSceneManager: End Game Button and Exit To Main Menu Button must be different buttons.",
+                this
+            );
+            endGameButton = null;
         }
 
         if (endGameButton != null)
@@ -151,6 +187,9 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         {
             OccupiedCharactersMask = 0;
             MatchStarted = false;
+            MatchEnded = false;
+            MatchTimer = default;
+            FinalResults = default;
         }
 
         HideEndGamePanel();
@@ -163,6 +202,11 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             characterSelectionUI.Show();
             characterSelectionUI.SetStatus("Choose a character");
         }
+
+        avatarSelectionManager?.HideSelectionUI();
+
+        if (MatchEnded)
+            ShowEndGamePanel(FinalResults.ToString());
     }
 
     public override void Despawned(NetworkRunner despawnRunner, bool hasState)
@@ -171,9 +215,36 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             despawnRunner.RemoveCallbacks(this);
     }
 
+    public override void FixedUpdateNetwork()
+    {
+        if (Object == null ||
+            !Object.HasStateAuthority ||
+            Runner == null ||
+            MatchEnded)
+        {
+            return;
+        }
+
+        if (!MatchStarted)
+        {
+            TryStartMatchWhenAllPlayersSelected();
+            return;
+        }
+
+        if (MatchTimer.Expired(Runner))
+            EndMatchInternal(false);
+    }
+
+    public override void Render()
+    {
+        if (MatchEnded && !endGamePanelShown)
+            ShowEndGamePanel(FinalResults.ToString());
+    }
+
     private void Update()
     {
         RefreshEndGameButton();
+        RefreshMatchTimerText();
     }
 
     private void RefreshEndGameButton()
@@ -181,7 +252,7 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         bool canEndGame =
             runner != null &&
             runner.IsSharedModeMasterClient &&
-            !gameEnded;
+            !IsGameEnded;
 
         if (endGameButton != null)
         {
@@ -192,7 +263,7 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     public void RequestEndGame()
     {
-        if (gameEnded)
+        if (IsGameEnded)
             return;
 
         if (runner == null)
@@ -204,18 +275,27 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             return;
         }
 
-        string masterName = "MasterClient";
+        if (Object != null && Object.HasStateAuthority)
+        {
+            EndMatchInternal(true);
+            return;
+        }
 
-        if (GameChatNetwork.Instance != null)
-            masterName = GameChatNetwork.Instance.GetPlayerName(runner.LocalPlayer);
-
-        RPC_ShowEndGamePanel($"Game ended by {masterName}.\nPress Exit to return to main menu.");
+        RPC_RequestManualEndGame();
     }
 
-    [Rpc(RpcSources.All, RpcTargets.All)]
-    private void RPC_ShowEndGamePanel(NetworkString<_128> message)
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_RequestManualEndGame(
+        RpcInfo info = default)
     {
-        ShowEndGamePanel(message.ToString());
+        if (Runner == null ||
+            !Runner.IsSharedModeMasterClient ||
+            info.Source != Runner.LocalPlayer)
+        {
+            return;
+        }
+
+        EndMatchInternal(true);
     }
 
     private void ShowEndGamePanel(string message)
@@ -233,6 +313,9 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
         if (endGameButton != null)
             endGameButton.gameObject.SetActive(false);
+
+        if (matchTimerText != null)
+            matchTimerText.gameObject.SetActive(false);
 
         if (endGameUI != null)
         {
@@ -256,6 +339,243 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             endGameUI.Hide();
         else if (endGamePanel != null)
             endGamePanel.SetActive(false);
+
+        RefreshMatchTimerText();
+    }
+
+    private void EndMatchInternal(bool endedManually)
+    {
+        if (Object == null ||
+            !Object.HasStateAuthority ||
+            MatchEnded)
+        {
+            return;
+        }
+
+        string results =
+            BuildFinalResults(endedManually);
+
+        FinalResults = results;
+        MatchTimer = default;
+        MatchEnded = true;
+
+        ShowEndGamePanel(results);
+    }
+
+    private void OnMatchEndedChanged()
+    {
+        if (!MatchEnded)
+            return;
+
+        ShowEndGamePanel(FinalResults.ToString());
+    }
+
+    private void RefreshMatchTimerText()
+    {
+        if (matchTimerText == null)
+            return;
+
+        bool shouldShow =
+            Runner != null &&
+            MatchStarted &&
+            !IsGameEnded;
+
+        matchTimerText.gameObject.SetActive(shouldShow);
+
+        if (!shouldShow)
+            return;
+
+        float remainingSeconds =
+            MatchTimer.RemainingTime(Runner) ?? 0f;
+        int displayedSeconds =
+            Mathf.Max(0, Mathf.CeilToInt(remainingSeconds));
+        int minutes = displayedSeconds / 60;
+        int seconds = displayedSeconds % 60;
+
+        matchTimerText.text =
+            $"{minutes}:{seconds:00}";
+    }
+
+    private string BuildFinalResults(bool endedManually)
+    {
+        List<MatchResultEntry> results =
+            new List<MatchResultEntry>();
+
+        if (Runner != null)
+        {
+            foreach (PlayerRef player in Runner.ActivePlayers)
+            {
+                results.Add(
+                    new MatchResultEntry
+                    {
+                        Player = player,
+                        PlayerName = GetShortPlayerName(player),
+                        Strength =
+                            hexTerritoryManager != null
+                                ? hexTerritoryManager
+                                    .GetDisplayedStrength(player)
+                                : 0,
+                        IsDead =
+                            hexTerritoryManager != null &&
+                            hexTerritoryManager
+                                .IsPlayerEliminated(player)
+                    }
+                );
+            }
+        }
+
+        results.Sort(CompareMatchResults);
+
+        StringBuilder builder = new StringBuilder();
+        builder.AppendLine("MATCH RESULTS");
+        builder.AppendLine();
+
+        int aliveCount = 0;
+
+        while (aliveCount < results.Count &&
+               !results[aliveCount].IsDead)
+        {
+            aliveCount++;
+        }
+
+        int resultIndex = 0;
+
+        while (resultIndex < aliveCount)
+        {
+            int groupEnd = resultIndex + 1;
+            int groupStrength =
+                results[resultIndex].Strength;
+
+            while (groupEnd < aliveCount &&
+                   results[groupEnd].Strength ==
+                   groupStrength)
+            {
+                groupEnd++;
+            }
+
+            bool isDraw = groupEnd - resultIndex > 1;
+            int place = resultIndex + 1;
+
+            for (int i = resultIndex; i < groupEnd; i++)
+            {
+                builder.Append(place);
+                builder.Append(". ");
+                builder.Append(results[i].PlayerName);
+                builder.Append(" - ");
+                builder.Append(results[i].Strength);
+                builder.Append(" STR");
+
+                if (isDraw)
+                    builder.Append(" - DRAW");
+
+                builder.AppendLine();
+            }
+
+            resultIndex = groupEnd;
+        }
+
+        for (int i = aliveCount; i < results.Count; i++)
+        {
+            builder.Append("Last. ");
+            builder.Append(results[i].PlayerName);
+            builder.AppendLine(" - DEAD");
+        }
+
+        builder.AppendLine();
+        AppendWinnerSummary(
+            builder,
+            results,
+            aliveCount
+        );
+        builder.AppendLine(
+            endedManually
+                ? "Ended by MasterClient"
+                : "Time is over"
+        );
+
+        return builder.ToString();
+    }
+
+    private static int CompareMatchResults(
+        MatchResultEntry first,
+        MatchResultEntry second)
+    {
+        if (first.IsDead != second.IsDead)
+            return first.IsDead ? 1 : -1;
+
+        int strengthComparison =
+            second.Strength.CompareTo(first.Strength);
+
+        if (strengthComparison != 0)
+            return strengthComparison;
+
+        return first.Player.PlayerId.CompareTo(
+            second.Player.PlayerId
+        );
+    }
+
+    private static void AppendWinnerSummary(
+        StringBuilder builder,
+        List<MatchResultEntry> results,
+        int aliveCount)
+    {
+        if (aliveCount <= 0)
+        {
+            builder.AppendLine(
+                "Winner: nobody - all players are dead"
+            );
+            return;
+        }
+
+        int bestStrength = results[0].Strength;
+        int winnerCount = 1;
+
+        while (winnerCount < aliveCount &&
+               results[winnerCount].Strength ==
+               bestStrength)
+        {
+            winnerCount++;
+        }
+
+        if (winnerCount == 1)
+        {
+            builder.Append("Winner: ");
+            builder.AppendLine(results[0].PlayerName);
+            return;
+        }
+
+        builder.AppendLine(
+            "Winners: DRAW at first place"
+        );
+    }
+
+    private static string GetShortPlayerName(
+        PlayerRef player)
+    {
+        string playerName =
+            GameChatNetwork.Instance != null
+                ? GameChatNetwork.Instance.GetPlayerName(player)
+                : "Player " + player.PlayerId;
+
+        if (string.IsNullOrWhiteSpace(playerName))
+            playerName = "Player " + player.PlayerId;
+
+        playerName = playerName
+            .Replace('\n', ' ')
+            .Replace('\r', ' ')
+            .Trim();
+
+        return playerName.Length > 16
+            ? playerName.Substring(0, 16)
+            : playerName;
+    }
+
+    private struct MatchResultEntry
+    {
+        public PlayerRef Player;
+        public string PlayerName;
+        public int Strength;
+        public bool IsDead;
     }
 
     public async void LeaveCurrentGame()
@@ -330,6 +650,14 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
         if (runner == null)
             runner = Runner;
+
+        if (localCharacterIndex >= 0)
+        {
+            characterSelectionUI?.SetStatus(
+                "You already selected a color"
+            );
+            return;
+        }
 
         if (localPlayerObject != null)
         {
@@ -425,7 +753,16 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         if (runner.LocalPlayer != targetPlayer)
             return;
 
-        SpawnLocalPlayer(characterIndex, spawnIndex);
+        localCharacterIndex = characterIndex;
+        localSpawnIndex = spawnIndex;
+
+        characterSelectionUI?.SetStatus(
+            "Color selected. Choose an avatar."
+        );
+        characterSelectionUI?.Hide();
+        avatarSelectionManager?.ShowSelectionUI();
+
+        TrySpawnLocalPlayerAfterSetup();
     }
 
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
@@ -466,6 +803,16 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         if (localPlayerObject != null)
             return;
 
+        if (avatarSelectionManager == null ||
+            avatarSelectionManager.LocalAvatarIndex < 0)
+        {
+            Debug.LogError(
+                "GameSceneManager: Player cannot spawn before selecting an avatar.",
+                this
+            );
+            return;
+        }
+
         NetworkObject currentPlayerObject = runner.GetPlayerObject(runner.LocalPlayer);
 
         if (NetworkObjectBehaviourReferences.TryGet(
@@ -493,12 +840,27 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             spawnRotation.eulerAngles
         );
 
+        int avatarIndex =
+            avatarSelectionManager.LocalAvatarIndex;
+
         localPlayerObject = runner.Spawn(
             playerPrefab,
             spawnPosition,
             spawnRotation,
             runner.LocalPlayer,
-            (_, spawnedObject) => ApplySpawnTransform(spawnedObject, spawnPosition, spawnRotation)
+            (_, spawnedObject) =>
+            {
+                ApplySpawnTransform(
+                    spawnedObject,
+                    spawnPosition,
+                    spawnRotation
+                );
+                ApplyPlayerSelection(
+                    spawnedObject,
+                    characterIndex,
+                    avatarIndex
+                );
+            }
         );
 
         if (localPlayerObject == null)
@@ -514,18 +876,11 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             localPlayerObject.transform.position
         );
 
-        NetworkPlayerCharacter playerCharacter =
-            NetworkObjectBehaviourReferences.GetRequired<NetworkPlayerCharacter>(
-                localPlayerObject,
-                this
-            );
-
-        if (playerCharacter)
-        {
-            playerCharacter.CharacterIndex = characterIndex;
-
-            avatarSelectionManager?.ApplyLocalSelectionToPlayer(playerCharacter);
-        }
+        ApplyPlayerSelection(
+            localPlayerObject,
+            characterIndex,
+            avatarIndex
+        );
 
         runner.SetPlayerObject(runner.LocalPlayer, localPlayerObject);
 
@@ -534,10 +889,51 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     private void RefreshSelectionUIAfterSpawn()
     {
-        if (MatchStarted)
-            characterSelectionUI?.Hide();
-        else
-            characterSelectionUI?.ShowWaitingForMatchStart();
+        characterSelectionUI?.Hide();
+        avatarSelectionManager?.HideSelectionUI();
+    }
+
+    public void NotifyLocalAvatarSelectionApproved()
+    {
+        TrySpawnLocalPlayerAfterSetup();
+    }
+
+    private void TrySpawnLocalPlayerAfterSetup()
+    {
+        if (localPlayerObject != null ||
+            localCharacterIndex < 0 ||
+            localSpawnIndex < 0 ||
+            avatarSelectionManager == null ||
+            avatarSelectionManager.LocalAvatarIndex < 0)
+        {
+            return;
+        }
+
+        characterSelectionUI?.Hide();
+        avatarSelectionManager.HideSelectionUI();
+
+        SpawnLocalPlayer(
+            localCharacterIndex,
+            localSpawnIndex
+        );
+    }
+
+    private void ApplyPlayerSelection(
+        NetworkObject playerObject,
+        int characterIndex,
+        int avatarIndex)
+    {
+        NetworkPlayerCharacter playerCharacter =
+            NetworkObjectBehaviourReferences.GetRequired<NetworkPlayerCharacter>(
+                playerObject,
+                this
+            );
+
+        if (playerCharacter == null)
+            return;
+
+        playerCharacter.CharacterIndex = characterIndex;
+        playerCharacter.AvatarIndex = avatarIndex;
     }
 
     private void ApplySpawnTransform(NetworkObject playerObject, Vector3 spawnPosition, Quaternion spawnRotation)
@@ -787,8 +1183,10 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
         characterSelectionUI?.Hide();
         Debug.Log(
-            "All connected players selected a color. Match started."
+            "All connected players selected a color and avatar. Match started."
         );
+
+        RefreshMatchTimerText();
     }
 
     private void TryStartMatchWhenAllPlayersSelected()
@@ -803,6 +1201,7 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
         int activePlayerCount = 0;
         int selectedPlayerCount = 0;
+        int spawnedPlayerCount = 0;
 
         foreach (PlayerRef activePlayer in Runner.ActivePlayers)
         {
@@ -810,10 +1209,24 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
             if (PlayerAlreadyHasCharacter(activePlayer))
                 selectedPlayerCount++;
+
+            NetworkObject playerObject =
+                Runner.GetPlayerObject(activePlayer);
+
+            if (NetworkObjectBehaviourReferences.TryGet(
+                    playerObject,
+                    out HexBallPlayerController _))
+            {
+                spawnedPlayerCount++;
+            }
         }
 
-        if (activePlayerCount < MinimumPlayersToStart || selectedPlayerCount != activePlayerCount)
+        if (activePlayerCount < MinimumPlayersToStart ||
+            selectedPlayerCount != activePlayerCount ||
+            spawnedPlayerCount != activePlayerCount)
+        {
             return;
+        }
         
 
         if (!avatarSelectionManager)
@@ -825,6 +1238,12 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
         if (!avatarSelectionManager.AllActivePlayersHaveAvatar())
             return;
         
+        MatchTimer = TickTimer.CreateFromSeconds(
+            Runner,
+            gameRulesSettings != null
+                ? gameRulesSettings.MatchDurationSeconds
+                : 150f
+        );
         MatchStarted = true;
     }
 

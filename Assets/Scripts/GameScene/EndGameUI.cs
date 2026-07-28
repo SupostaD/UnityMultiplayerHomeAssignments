@@ -18,6 +18,9 @@ public class EndGameUI : MonoBehaviour
     private bool isExiting;
     private bool emergencyExitStarted;
 
+    public Button ExitToMainMenuButton =>
+        exitToMainMenuButton;
+
     private void Awake()
     {
         Hide();
@@ -51,6 +54,9 @@ public class EndGameUI : MonoBehaviour
 
     public void Show(string message)
     {
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+
         if (panelRoot != null)
             panelRoot.SetActive(true);
 

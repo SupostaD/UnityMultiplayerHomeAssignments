@@ -14,6 +14,20 @@ public class GameSceneManager :
     INetworkRunnerCallbacks,
     IStateAuthorityChanged
 {
+    private static readonly Color[] DefaultCharacterColors =
+    {
+        Color.red,
+        Color.blue,
+        Color.green,
+        Color.yellow,
+        Color.cyan,
+        Color.magenta,
+        new Color(1f, 0.5f, 0f),
+        new Color(0.5f, 0f, 1f),
+        new Color(0.1f, 0.1f, 0.1f),
+        Color.white
+    };
+
     [Header("Player")]
     [SerializeField] private NetworkObject playerPrefab;
     [SerializeField] private Transform[] spawnPoints;
@@ -633,15 +647,11 @@ public class GameSceneManager :
 
     public Color GetCharacterColor(int characterIndex)
     {
-        if (characterColors == null)
-            return Color.white;
-
         if (characterIndex < 0 ||
-            characterIndex >= MaxCharacters ||
-            characterIndex >= characterColors.Length)
+            characterIndex >= MaxCharacters)
             return Color.white;
 
-        return characterColors[characterIndex];
+        return GetConfiguredCharacterColor(characterIndex);
     }
 
     public void RequestCharacter(int characterIndex)
@@ -995,13 +1005,24 @@ public class GameSceneManager :
         Color[] selectableColors = new Color[MaxCharacters];
 
         for (int i = 0; i < selectableColors.Length; i++)
-        {
-            selectableColors[i] = characterColors != null && i < characterColors.Length
-                ? characterColors[i]
-                : Color.white;
-        }
+            selectableColors[i] = GetConfiguredCharacterColor(i);
 
         return selectableColors;
+    }
+
+    private Color GetConfiguredCharacterColor(int characterIndex)
+    {
+        if (characterColors != null &&
+            characterIndex >= 0 &&
+            characterIndex < characterColors.Length)
+        {
+            return characterColors[characterIndex];
+        }
+
+        return characterIndex >= 0 &&
+               characterIndex < DefaultCharacterColors.Length
+            ? DefaultCharacterColors[characterIndex]
+            : Color.white;
     }
 
     private int GetSpawnIndexForCharacter(int characterIndex)

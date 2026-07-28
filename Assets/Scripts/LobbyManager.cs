@@ -263,8 +263,25 @@ public class LobbyManager : MonoBehaviour, INetworkRunnerCallbacks
 
     private void InitializeGameModeAndMapDropdowns()
     {
+        PopulateMaxPlayersDropdown();
         PopulateGameModeDropdown(gameModeDropdown);
         PopulateCreateMapDropdown();
+    }
+
+    private void PopulateMaxPlayersDropdown()
+    {
+        List<string> options = new List<string>(
+            MaximumRoomPlayers - MinimumRoomPlayers + 1
+        );
+
+        for (int playerCount = MinimumRoomPlayers;
+             playerCount <= MaximumRoomPlayers;
+             playerCount++)
+        {
+            options.Add(playerCount.ToString());
+        }
+
+        SetDropdownOptions(maxPlayersDropdown, options, 0);
     }
 
     private void PopulateGameModeDropdown(TMP_Dropdown dropdown)

@@ -40,9 +40,6 @@ public class HexBallPlayerController :
     [Header("Hex Capture")]
     [SerializeField, Min(0.05f)] private float captureRetrySeconds = 0.15f;
 
-    [Header("Strength Combat")]
-    [SerializeField, Min(0.02f)] private float contactReportInterval = 0.1f;
-
     [Header("New Input System")]
     [SerializeField] private InputActionReference moveAction;
     [SerializeField] private bool createDefaultMoveAction = true;
@@ -919,6 +916,10 @@ public class HexBallPlayerController :
 
         PlayerRef otherPlayerRef = otherPlayer.Object.InputAuthority;
         int cooldownKey = otherPlayerRef.PlayerId;
+        HexStrengthCombatManager combatManager = GetCombatManager();
+
+        if (combatManager == null)
+            return;
 
         if (contactReportCooldowns.TryGetValue(
                 cooldownKey,
@@ -928,14 +929,9 @@ public class HexBallPlayerController :
             return;
         }
 
-        HexStrengthCombatManager combatManager = GetCombatManager();
-
-        if (combatManager == null)
-            return;
-
         contactReportCooldowns[cooldownKey] = TickTimer.CreateFromSeconds(
             Runner,
-            Mathf.Max(0.02f, contactReportInterval)
+            combatManager.ContactReportIntervalSeconds
         );
         combatManager.RequestContact(otherPlayerRef);
     }
@@ -955,6 +951,8 @@ public class HexBallPlayerController :
         {
             PlayerRef otherPlayerRef =
                 otherPlayer.Object.InputAuthority;
+
+            combatManager.RequestContact(otherPlayerRef);
 
             if (IsLocalImpactOnCooldown(otherPlayerRef))
                 return;

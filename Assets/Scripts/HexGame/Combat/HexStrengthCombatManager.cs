@@ -6,14 +6,7 @@ public class HexStrengthCombatManager : NetworkBehaviour
 {
     [Header("Required References")]
     [SerializeField] private HexTerritoryManager territoryManager;
-
-    [Header("Strength Drain")]
-    [SerializeField, Min(0.01f)] private float strengthDrainPerSecond = 1f;
-    [SerializeField, Min(0.02f)] private float transferIntervalSeconds = 0.1f;
-    [SerializeField, Min(0.05f)] private float contactMemorySeconds = 0.3f;
-
-    [Header("Master Validation")]
-    [SerializeField, Min(0.1f)] private float maximumContactDistance = 2.25f;
+    [SerializeField] private HexStrengthCombatSettings settings;
 
     private sealed class ActiveContact
     {
@@ -50,12 +43,25 @@ public class HexStrengthCombatManager : NetworkBehaviour
     private readonly List<long> contactsToRemove = new List<long>();
     private readonly List<long> impactsToRemove = new List<long>();
 
+    public float ContactReportIntervalSeconds =>
+        settings != null
+            ? settings.ContactReportIntervalSeconds
+            : 0.05f;
+
     public override void Spawned()
     {
         if (territoryManager == null)
         {
             Debug.LogError(
                 "HexStrengthCombatManager: Territory Manager is not assigned.",
+                this
+            );
+        }
+
+        if (settings == null)
+        {
+            Debug.LogError(
+                "HexStrengthCombatManager: Strength Combat Settings is not assigned.",
                 this
             );
         }
@@ -86,9 +92,13 @@ public class HexStrengthCombatManager : NetworkBehaviour
             if (!contact.NextTransfer.ExpiredOrNotRunning(Runner))
                 continue;
 
-            float interval = Mathf.Max(0.02f, transferIntervalSeconds);
+            float interval = settings != null
+                ? settings.TransferIntervalSeconds
+                : 0.05f;
             float transferAmount =
-                Mathf.Max(0.01f, strengthDrainPerSecond) * interval;
+                (settings != null
+                    ? settings.StrengthDrainPerSecond
+                    : 6f) * interval;
 
             territoryManager.TryTransferStrength(
                 contact.FirstPlayer,
@@ -274,10 +284,12 @@ public class HexStrengthCombatManager : NetworkBehaviour
             ? otherPlayer
             : reportingPlayer;
         long contactKey = BuildContactKey(firstPlayer, secondPlayer);
-        float memorySeconds = Mathf.Max(
-            Mathf.Max(0.05f, contactMemorySeconds),
-            Mathf.Max(0.02f, transferIntervalSeconds) * 2f
-        );
+        float interval = settings != null
+            ? settings.TransferIntervalSeconds
+            : 0.05f;
+        float memorySeconds = settings != null
+            ? settings.ContactMemorySeconds
+            : 0.2f;
 
         if (!activeContacts.TryGetValue(contactKey, out ActiveContact contact))
         {
@@ -287,10 +299,23 @@ public class HexStrengthCombatManager : NetworkBehaviour
                 SecondPlayer = secondPlayer,
                 NextTransfer = TickTimer.CreateFromSeconds(
                     Runner,
-                    Mathf.Max(0.02f, transferIntervalSeconds)
+                    interval
                 )
             };
             activeContacts.Add(contactKey, contact);
+
+            float immediateAmount = settings != null
+                ? settings.InitialContactDrain
+                : 1f;
+
+            if (immediateAmount > 0f)
+            {
+                territoryManager.TryTransferStrength(
+                    firstPlayer,
+                    secondPlayer,
+                    immediateAmount
+                );
+            }
         }
 
         contact.ContactExpiry = TickTimer.CreateFromSeconds(
@@ -328,7 +353,9 @@ public class HexStrengthCombatManager : NetworkBehaviour
             firstController.CollisionRadius +
             secondController.CollisionRadius;
         float maximumDistance = Mathf.Max(
-            Mathf.Max(0.1f, maximumContactDistance),
+            settings != null
+                ? settings.MaximumContactDistance
+                : 2.25f,
             combinedCollisionRadii + 0.25f
         );
 
@@ -367,14 +394,16 @@ public class HexStrengthCombatManager : NetworkBehaviour
         float combinedCollisionRadii =
             reportingController.CollisionRadius +
             otherController.CollisionRadius;
-        HexPlayerCollisionSettings settings =
+        HexPlayerCollisionSettings collisionSettings =
             GetCollisionSettings();
         float reportDrift =
-            settings != null
-                ? settings.MaximumReportPositionDrift
+            collisionSettings != null
+                ? collisionSettings.MaximumReportPositionDrift
                 : 0f;
         float allowedDistance = Mathf.Max(
-            Mathf.Max(0.1f, maximumContactDistance),
+            settings != null
+                ? settings.MaximumContactDistance
+                : 2.25f,
             combinedCollisionRadii + 0.25f
         ) + reportDrift;
 

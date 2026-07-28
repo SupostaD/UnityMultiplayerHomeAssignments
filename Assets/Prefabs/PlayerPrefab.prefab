@@ -6318,7 +6318,6 @@ MonoBehaviour:
   dashBoostDuration: 0.2
   dashVFX: {fileID: 7662806676386330043}
   captureRetrySeconds: 0.15
-  contactReportInterval: 0.1
   moveAction: {fileID: -1680190386980627800, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   createDefaultMoveAction: 0
   cameraRig: {fileID: 189120701933067952}

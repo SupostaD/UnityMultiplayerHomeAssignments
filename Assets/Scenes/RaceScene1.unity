@@ -38567,10 +38567,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HexStrengthCombatManager
   territoryManager: {fileID: 842348416}
-  strengthDrainPerSecond: 1
-  transferIntervalSeconds: 0.1
-  contactMemorySeconds: 0.3
-  maximumContactDistance: 2.25
+  settings: {fileID: 11400000, guid: 291d028ca766473398072dd70d23aa58, type: 2}
 --- !u!114 &842348418
 MonoBehaviour:
   m_ObjectHideFlags: 0

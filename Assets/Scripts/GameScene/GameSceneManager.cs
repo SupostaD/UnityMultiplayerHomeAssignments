@@ -9,7 +9,10 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
-public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
+public class GameSceneManager :
+    NetworkBehaviour,
+    INetworkRunnerCallbacks,
+    IStateAuthorityChanged
 {
     [Header("Player")]
     [SerializeField] private NetworkObject playerPrefab;
@@ -72,6 +75,9 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     [Networked, OnChangedRender(nameof(OnMatchEndedChanged))]
     private NetworkBool MatchEnded { get; set; }
 
+    [Networked, Capacity(MaxCharacters)]
+    private NetworkArray<PlayerRef> CharacterOwners => default;
+
     public static GameSceneManager Instance { get; private set; }
 
     private const int MinimumPlayersToStart = 2;
@@ -79,8 +85,6 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     private const int CornerSpawnCount = 6;
     private const int IslandSpawnCount = MaxCharacters - CornerSpawnCount;
     private const int ShutdownTimeoutMilliseconds = 2000;
-
-    private readonly PlayerRef[] characterOwners = new PlayerRef[MaxCharacters];
 
     private NetworkRunner runner;
     private NetworkObject localPlayerObject;
@@ -105,9 +109,6 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
     private void Awake()
     {
         Instance = this;
-
-        for (int i = 0; i < characterOwners.Length; i++)
-            characterOwners[i] = PlayerRef.None;
 
         if (hexTerritoryManager == null)
             Debug.LogError(
@@ -190,6 +191,9 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             MatchEnded = false;
             MatchTimer = default;
             FinalResults = default;
+
+            for (int i = 0; i < MaxCharacters; i++)
+                CharacterOwners.Set(i, PlayerRef.None);
         }
 
         HideEndGamePanel();
@@ -715,7 +719,7 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             return;
         }
 
-        characterOwners[characterIndex] = requestingPlayer;
+        CharacterOwners.Set(characterIndex, requestingPlayer);
         OccupiedCharactersMask |= 1 << characterIndex;
 
         int spawnIndex = GetSpawnIndexForCharacter(characterIndex);
@@ -967,9 +971,9 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     private bool PlayerAlreadyHasCharacter(PlayerRef player)
     {
-        for (int i = 0; i < characterOwners.Length; i++)
+        for (int i = 0; i < MaxCharacters; i++)
         {
-            if (characterOwners[i] == player)
+            if (CharacterOwners[i] == player)
                 return true;
         }
 
@@ -1249,6 +1253,8 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
     public void OnPlayerLeft(NetworkRunner callbackRunner, PlayerRef player)
     {
+        ClaimDepartedPlayerObjects(player);
+
         if (!Object.HasStateAuthority)
             return;
         
@@ -1259,12 +1265,12 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
 
         bool changed = false;
 
-        for (int i = 0; i < characterOwners.Length; i++)
+        for (int i = 0; i < MaxCharacters; i++)
         {
-            if (characterOwners[i] != player)
+            if (CharacterOwners[i] != player)
                 continue;
 
-            characterOwners[i] = PlayerRef.None;
+            CharacterOwners.Set(i, PlayerRef.None);
             OccupiedCharactersMask &= ~(1 << i);
             changed = true;
         }
@@ -1273,6 +1279,139 @@ public class GameSceneManager : NetworkBehaviour, INetworkRunnerCallbacks
             Debug.Log("Released character of player: " + player.PlayerId);
 
         TryStartMatchWhenAllPlayersSelected();
+    }
+
+    private void ClaimDepartedPlayerObjects(PlayerRef departedPlayer)
+    {
+        if (Runner == null ||
+            !Runner.IsSharedModeMasterClient)
+        {
+            return;
+        }
+
+        NetworkObject departedPlayerObject =
+            Runner.GetPlayerObject(departedPlayer);
+
+        foreach (NetworkObject networkObject in
+                 Runner.GetAllNetworkObjects())
+        {
+            if (networkObject == null ||
+                networkObject == departedPlayerObject ||
+                networkObject.StateAuthority != departedPlayer)
+            {
+                continue;
+            }
+
+            NetworkObjectFlags flags = networkObject.Flags;
+            bool allowsAuthorityOverride =
+                (flags &
+                 NetworkObjectFlags.AllowStateAuthorityOverride) != 0;
+            bool followsMasterClient =
+                (flags &
+                 NetworkObjectFlags.MasterClientObject) != 0;
+            bool isDestroyedWithAuthority =
+                (flags &
+                 NetworkObjectFlags.DestroyWhenStateAuthorityLeaves) != 0;
+
+            if (!allowsAuthorityOverride ||
+                followsMasterClient ||
+                isDestroyedWithAuthority)
+            {
+                continue;
+            }
+
+            networkObject.RequestStateAuthority();
+        }
+    }
+
+    public void StateAuthorityChanged()
+    {
+        RefreshEndGameButton();
+
+        if (Object == null || !Object.HasStateAuthority)
+            return;
+
+        ReconcileCharacterOwners();
+
+        Debug.Log(
+            "GameSceneManager: this client is now responsible for the " +
+            "authoritative match state."
+        );
+    }
+
+    private void ReconcileCharacterOwners()
+    {
+        if (Runner == null ||
+            Object == null ||
+            !Object.HasStateAuthority)
+        {
+            return;
+        }
+
+        for (int characterIndex = 0;
+             characterIndex < MaxCharacters;
+             characterIndex++)
+        {
+            PlayerRef owner = CharacterOwners[characterIndex];
+
+            if (owner != PlayerRef.None &&
+                !IsActivePlayer(owner))
+            {
+                avatarSelectionManager?.ReleaseAvatar(owner);
+                hexTerritoryManager?.ReleasePlayerTerritory(owner);
+
+                CharacterOwners.Set(
+                    characterIndex,
+                    PlayerRef.None
+                );
+            }
+        }
+
+        foreach (PlayerRef activePlayer in Runner.ActivePlayers)
+        {
+            NetworkObject playerObject =
+                Runner.GetPlayerObject(activePlayer);
+
+            if (!NetworkObjectBehaviourReferences.TryGet(
+                    playerObject,
+                    out NetworkPlayerCharacter playerCharacter) ||
+                !IsValidCharacterIndex(
+                    playerCharacter.CharacterIndex))
+            {
+                continue;
+            }
+
+            CharacterOwners.Set(
+                playerCharacter.CharacterIndex,
+                activePlayer
+            );
+        }
+
+        int rebuiltOccupiedMask = 0;
+
+        for (int characterIndex = 0;
+             characterIndex < MaxCharacters;
+             characterIndex++)
+        {
+            if (CharacterOwners[characterIndex] != PlayerRef.None)
+                rebuiltOccupiedMask |= 1 << characterIndex;
+        }
+
+        OccupiedCharactersMask = rebuiltOccupiedMask;
+    }
+
+    private bool IsActivePlayer(PlayerRef player)
+    {
+        if (Runner == null || player == PlayerRef.None)
+            return false;
+
+        foreach (PlayerRef activePlayer in Runner.ActivePlayers)
+        {
+            if (activePlayer == player)
+                return true;
+        }
+
+        return false;
     }
     
     public void NotifyAvatarSelectionChanged()

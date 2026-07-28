@@ -4,11 +4,21 @@ using UnityEngine;
 
 public class GameChatNetwork : NetworkBehaviour
 {
+    [System.Serializable]
+    private sealed class PlayerProfileJson
+    {
+        public int playerId;
+        public string playerName;
+        public int characterIndex;
+    }
+
     public static GameChatNetwork Instance { get; private set; }
 
     private NetworkRunner cachedRunner;
 
     private readonly Dictionary<PlayerRef, string> playerNames = new Dictionary<PlayerRef, string>();
+    private readonly Dictionary<PlayerRef, int> playerCharacterIndices =
+        new Dictionary<PlayerRef, int>();
 
     private const int MaxMessageCharacters = 60;
     private const int MaxNameCharacters = 24;
@@ -26,19 +36,55 @@ public class GameChatNetwork : NetworkBehaviour
             return;
 
         string name = PrepareName(ChatLocalData.PlayerName);
+        PlayerRef localPlayer = runner.LocalPlayer;
+        PlayerProfileJson profile = new PlayerProfileJson
+        {
+            playerId = localPlayer.PlayerId,
+            playerName = name,
+            characterIndex = GetPlayerCharacterIndex(localPlayer)
+        };
+        string serializedProfile = JsonUtility.ToJson(profile);
 
-        RPC_RegisterName(runner.LocalPlayer, name);
+        RPC_RegisterPlayerProfileJson(localPlayer, serializedProfile);
     }
 
     [Rpc(RpcSources.All, RpcTargets.All)]
-    private void RPC_RegisterName(PlayerRef player, NetworkString<_32> playerName)
+    private void RPC_RegisterPlayerProfileJson(
+        PlayerRef player,
+        NetworkString<_128> serializedProfile)
     {
-        string name = playerName.ToString();
+        PlayerProfileJson profile;
+
+        try
+        {
+            profile = JsonUtility.FromJson<PlayerProfileJson>(
+                serializedProfile.ToString()
+            );
+        }
+        catch (System.ArgumentException exception)
+        {
+            Debug.LogWarning(
+                "GameChatNetwork: Invalid player profile JSON. " +
+                exception.Message
+            );
+            return;
+        }
+
+        if (profile == null || profile.playerId != player.PlayerId)
+        {
+            Debug.LogWarning(
+                "GameChatNetwork: Player profile JSON validation failed."
+            );
+            return;
+        }
+
+        string name = PrepareName(profile.playerName);
 
         if (string.IsNullOrWhiteSpace(name))
             name = "Player " + player.PlayerId;
 
         playerNames[player] = name;
+        playerCharacterIndices[player] = profile.characterIndex;
     }
 
     public void SendGlobalMessage(string message)
@@ -143,23 +189,28 @@ public class GameChatNetwork : NetworkBehaviour
         NetworkRunner runner = GetRunner();
 
         if (runner == null)
-            return 0;
+            return GetCachedPlayerCharacterIndex(player);
 
         NetworkObject playerObject = runner.GetPlayerObject(player);
 
         if (playerObject == null)
-            return 0;
+            return GetCachedPlayerCharacterIndex(player);
 
-        NetworkPlayerCharacter playerCharacter =
-            NetworkObjectBehaviourReferences.GetRequired<NetworkPlayerCharacter>(
+        if (!NetworkObjectBehaviourReferences.TryGet(
                 playerObject,
-                this
-            );
-
-        if (playerCharacter == null)
-            return 0;
+                out NetworkPlayerCharacter playerCharacter))
+        {
+            return GetCachedPlayerCharacterIndex(player);
+        }
 
         return playerCharacter.CharacterIndex;
+    }
+
+    private int GetCachedPlayerCharacterIndex(PlayerRef player)
+    {
+        return playerCharacterIndices.TryGetValue(player, out int characterIndex)
+            ? characterIndex
+            : 0;
     }
 
     public Color GetPlayerColor(PlayerRef player)

@@ -6,23 +6,23 @@ using UnityEngine;
 public sealed class HexStrengthCombatSettings : ScriptableObject
 {
     [Header("Immediate Contact")]
-    [SerializeField, Min(0f)]
+    [SerializeField, Min(0)]
     [Tooltip(
-        "Strength transferred immediately when two players begin touching. " +
+        "Whole strength units transferred immediately when two players begin touching. " +
         "Set to 0 to disable the initial instant transfer.")]
-    private float initialContactDrain = 1f;
+    private int initialContactDrain = 1;
 
     [Header("Continuous Drain")]
-    [SerializeField, Min(0.01f)]
+    [SerializeField, Min(1)]
     [Tooltip(
-        "Strength transferred from the weaker player to the stronger player " +
-        "per second while they remain in contact.")]
-    private float strengthDrainPerSecond = 6f;
+        "Whole strength units transferred from the weaker player to the stronger " +
+        "player per second while they remain in contact.")]
+    private int strengthDrainPerSecond = 6;
 
     [SerializeField, Min(0.02f)]
     [Tooltip(
-        "How often the authoritative player applies continuous strength drain. " +
-        "Lower values make the drain update more smoothly.")]
+        "How often the authority updates drain progress. Strength itself is " +
+        "transferred only in whole units.")]
     private float transferIntervalSeconds = 0.05f;
 
     [SerializeField, Min(0.02f)]
@@ -43,10 +43,10 @@ public sealed class HexStrengthCombatSettings : ScriptableObject
         "players are touching. Their combined collision radii can increase it.")]
     private float maximumContactDistance = 2.25f;
 
-    public float InitialContactDrain =>
-        Mathf.Max(0f, initialContactDrain);
-    public float StrengthDrainPerSecond =>
-        Mathf.Max(0.01f, strengthDrainPerSecond);
+    public int InitialContactDrain =>
+        Mathf.Max(0, initialContactDrain);
+    public int StrengthDrainPerSecond =>
+        Mathf.Max(1, strengthDrainPerSecond);
     public float TransferIntervalSeconds =>
         Mathf.Max(0.02f, transferIntervalSeconds);
     public float ContactReportIntervalSeconds =>

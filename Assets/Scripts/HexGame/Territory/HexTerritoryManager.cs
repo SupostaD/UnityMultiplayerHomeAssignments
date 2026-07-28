@@ -6,7 +6,7 @@ public class HexTerritoryManager : NetworkBehaviour
 {
     public const int MaximumNetworkedTiles = 512;
     public const int MaximumNetworkedPlayers = 16;
-    private const float MinimumStrength = 0.0001f;
+    private const int MinimumStrength = 0;
 
     private enum CaptureVisualMode
     {
@@ -42,7 +42,7 @@ public class HexTerritoryManager : NetworkBehaviour
     private NetworkArray<Vector2> TileCaptureImpactPoints => default;
 
     [Networked, Capacity(MaximumNetworkedPlayers)]
-    private NetworkArray<float> PlayerStrengths => default;
+    private NetworkArray<int> PlayerStrengths => default;
 
     [Networked, Capacity(MaximumNetworkedPlayers)]
     private NetworkArray<int> PlayerTerritoryCounts => default;
@@ -91,7 +91,7 @@ public class HexTerritoryManager : NetworkBehaviour
 
             for (int i = 0; i < MaximumNetworkedPlayers; i++)
             {
-                PlayerStrengths.Set(i, 0f);
+                PlayerStrengths.Set(i, 0);
                 PlayerTerritoryCounts.Set(i, 0);
                 PlayerHasEnteredMatch.Set(i, false);
                 EliminatedPlayers.Set(i, false);
@@ -149,20 +149,16 @@ public class HexTerritoryManager : NetworkBehaviour
         return TileOwnerKeys[tileIndex] == EncodeOwner(player);
     }
 
-    public float GetStrength(PlayerRef player)
+    public int GetStrength(PlayerRef player)
     {
         return TryGetPlayerSlot(player, out int slot)
-            ? Mathf.Max(0f, PlayerStrengths[slot])
-            : 0f;
+            ? Mathf.Max(0, PlayerStrengths[slot])
+            : 0;
     }
 
-    public float GetDisplayedStrength(PlayerRef player)
+    public int GetDisplayedStrength(PlayerRef player)
     {
-        float strength = GetStrength(player);
-
-        return strength <= MinimumStrength
-            ? 0f
-            : strength;
+        return GetStrength(player);
     }
 
     public int GetTerritoryCount(PlayerRef player)
@@ -181,12 +177,12 @@ public class HexTerritoryManager : NetworkBehaviour
     public bool TryTransferStrength(
         PlayerRef firstPlayer,
         PlayerRef secondPlayer,
-        float requestedAmount)
+        int requestedAmount)
     {
         if (Object == null ||
             !Object.HasStateAuthority ||
             firstPlayer == secondPlayer ||
-            requestedAmount <= 0f ||
+            requestedAmount <= 0 ||
             !TryGetPlayerSlot(firstPlayer, out int firstSlot) ||
             !TryGetPlayerSlot(secondPlayer, out int secondSlot) ||
             EliminatedPlayers[firstSlot] ||
@@ -197,10 +193,10 @@ public class HexTerritoryManager : NetworkBehaviour
             return false;
         }
 
-        float firstStrength = Mathf.Max(0f, PlayerStrengths[firstSlot]);
-        float secondStrength = Mathf.Max(0f, PlayerStrengths[secondSlot]);
+        int firstStrength = Mathf.Max(0, PlayerStrengths[firstSlot]);
+        int secondStrength = Mathf.Max(0, PlayerStrengths[secondSlot]);
 
-        if (Mathf.Approximately(firstStrength, secondStrength))
+        if (firstStrength == secondStrength)
             return false;
 
         int strongerSlot = firstStrength > secondStrength
@@ -209,12 +205,12 @@ public class HexTerritoryManager : NetworkBehaviour
         int weakerSlot = firstStrength > secondStrength
             ? secondSlot
             : firstSlot;
-        float transferableAmount = Mathf.Min(
-            Mathf.Max(0f, requestedAmount),
+        int transferableAmount = Mathf.Min(
+            Mathf.Max(0, requestedAmount),
             PlayerStrengths[weakerSlot]
         );
 
-        if (transferableAmount <= 0f)
+        if (transferableAmount <= 0)
         {
             EliminatePlayer(weakerSlot);
             return false;
@@ -226,7 +222,7 @@ public class HexTerritoryManager : NetworkBehaviour
         );
         PlayerStrengths.Set(
             weakerSlot,
-            Mathf.Max(0f, PlayerStrengths[weakerSlot] - transferableAmount)
+            Mathf.Max(0, PlayerStrengths[weakerSlot] - transferableAmount)
         );
 
         if (PlayerStrengths[weakerSlot] <= MinimumStrength)
@@ -287,7 +283,7 @@ public class HexTerritoryManager : NetworkBehaviour
 
         if (TryGetPlayerSlot(player, out int slot))
         {
-            PlayerStrengths.Set(slot, 0f);
+            PlayerStrengths.Set(slot, 0);
             PlayerTerritoryCounts.Set(slot, 0);
             PlayerHasEnteredMatch.Set(slot, false);
             EliminatedPlayers.Set(slot, false);
@@ -373,7 +369,7 @@ public class HexTerritoryManager : NetworkBehaviour
             UpdateTerritoryCount(previousOwner);
 
             if (GetGameRulesSettings().LoseStrengthWhenHexIsStolen)
-                ApplyStrengthDelta(previousOwner, -1f);
+            ApplyStrengthDelta(previousOwner, -1);
         }
 
         if (!TryGetPlayerSlot(requestingPlayer, out int requestingPlayerSlot))
@@ -382,7 +378,7 @@ public class HexTerritoryManager : NetworkBehaviour
         }
 
         PlayerHasEnteredMatch.Set(requestingPlayerSlot, true);
-        ApplyStrengthDelta(requestingPlayer, 1f);
+        ApplyStrengthDelta(requestingPlayer, 1);
         CaptureEnclosedArea(requestingPlayer, newOwnerKey);
         UpdateTerritoryCount(requestingPlayer);
     }
@@ -438,8 +434,8 @@ public class HexTerritoryManager : NetworkBehaviour
         if (rules == null)
             return;
 
-        float currentStrength =
-            Mathf.Max(0f, PlayerStrengths[playerSlot]);
+        int currentStrength =
+            Mathf.Max(0, PlayerStrengths[playerSlot]);
 
         if (currentStrength <=
             rules.DeathZoneProtectedStrengthThreshold)
@@ -448,16 +444,15 @@ public class HexTerritoryManager : NetworkBehaviour
             return;
         }
 
-        float strengthLoss =
+        float rawStrengthLoss =
             currentStrength *
             rules.DeathZoneStrengthLossFraction;
-
-        if (rules.RoundDeathZoneStrengthLossUp)
-            strengthLoss = Mathf.Ceil(strengthLoss);
-
+        int strengthLoss = rules.RoundDeathZoneStrengthLossUp
+            ? Mathf.CeilToInt(rawStrengthLoss)
+            : Mathf.FloorToInt(rawStrengthLoss);
         strengthLoss = Mathf.Min(currentStrength, strengthLoss);
 
-        if (strengthLoss > 0f)
+        if (strengthLoss > 0)
             ApplyStrengthDelta(playerSlot, -strengthLoss);
 
         RPC_ReturnPlayerFromDeathZone(affectedPlayer);
@@ -689,9 +684,12 @@ public class HexTerritoryManager : NetworkBehaviour
                 ApplyStrengthDelta(slot, -lostTileCount);
         }
 
-        float strengthReward =
-            capturedTileCount *
-            captureSettings.EnclosedHexStrengthMultiplier;
+        int strengthReward = Mathf.Max(
+            0,
+            Mathf.RoundToInt(
+                capturedTileCount *
+                captureSettings.EnclosedHexStrengthMultiplier)
+        );
 
         ApplyStrengthDelta(capturingPlayer, strengthReward);
     }
@@ -800,7 +798,7 @@ public class HexTerritoryManager : NetworkBehaviour
         );
     }
 
-    private void ApplyStrengthDelta(PlayerRef player, float delta)
+    private void ApplyStrengthDelta(PlayerRef player, int delta)
     {
         if (!TryGetPlayerSlot(player, out int slot))
             return;
@@ -808,7 +806,7 @@ public class HexTerritoryManager : NetworkBehaviour
         ApplyStrengthDelta(slot, delta);
     }
 
-    private void ApplyStrengthDelta(int slot, float delta)
+    private void ApplyStrengthDelta(int slot, int delta)
     {
         if (slot < 0 ||
             slot >= MaximumNetworkedPlayers ||
@@ -817,10 +815,10 @@ public class HexTerritoryManager : NetworkBehaviour
             return;
         }
 
-        float newStrength = Mathf.Max(0f, PlayerStrengths[slot] + delta);
+        int newStrength = Mathf.Max(0, PlayerStrengths[slot] + delta);
         PlayerStrengths.Set(slot, newStrength);
 
-        if (delta < 0f &&
+        if (delta < 0 &&
             PlayerHasEnteredMatch[slot] &&
             newStrength <= MinimumStrength)
         {
@@ -839,7 +837,7 @@ public class HexTerritoryManager : NetworkBehaviour
 
         PlayEliminationVFX(playerSlot);
 
-        PlayerStrengths.Set(playerSlot, 0f);
+        PlayerStrengths.Set(playerSlot, 0);
         PlayerTerritoryCounts.Set(playerSlot, 0);
         EliminatedPlayers.Set(playerSlot, true);
 

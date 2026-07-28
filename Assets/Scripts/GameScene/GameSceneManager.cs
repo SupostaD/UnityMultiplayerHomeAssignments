@@ -503,13 +503,12 @@ public class GameSceneManager :
         while (resultIndex < aliveCount)
         {
             int groupEnd = resultIndex + 1;
-            float groupStrength =
+            int groupStrength =
                 results[resultIndex].Strength;
 
             while (groupEnd < aliveCount &&
-                   Mathf.Approximately(
-                       results[groupEnd].Strength,
-                       groupStrength))
+                   results[groupEnd].Strength ==
+                   groupStrength)
             {
                 groupEnd++;
             }
@@ -523,7 +522,7 @@ public class GameSceneManager :
                 builder.Append(". ");
                 builder.Append(results[i].PlayerName);
                 builder.Append(" - ");
-                builder.Append(results[i].Strength.ToString("0.##"));
+                builder.Append(results[i].Strength);
                 builder.Append(" STR");
 
                 if (isDraw)
@@ -588,13 +587,12 @@ public class GameSceneManager :
             return;
         }
 
-        float bestStrength = results[0].Strength;
+        int bestStrength = results[0].Strength;
         int winnerCount = 1;
 
         while (winnerCount < aliveCount &&
-               Mathf.Approximately(
-                   results[winnerCount].Strength,
-                   bestStrength))
+               results[winnerCount].Strength ==
+               bestStrength)
         {
             winnerCount++;
         }
@@ -636,7 +634,7 @@ public class GameSceneManager :
     {
         public PlayerRef Player;
         public string PlayerName;
-        public float Strength;
+        public int Strength;
         public bool IsDead;
     }
 

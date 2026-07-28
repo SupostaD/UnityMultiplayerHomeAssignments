@@ -14,6 +14,7 @@ public class HexStrengthCombatManager : NetworkBehaviour
         public PlayerRef SecondPlayer;
         public TickTimer ContactExpiry;
         public TickTimer NextTransfer;
+        public float DrainProgress;
     }
 
     private sealed class PendingImpact
@@ -95,16 +96,24 @@ public class HexStrengthCombatManager : NetworkBehaviour
             float interval = settings != null
                 ? settings.TransferIntervalSeconds
                 : 0.05f;
-            float transferAmount =
-                (settings != null
-                    ? settings.StrengthDrainPerSecond
-                    : 6f) * interval;
+            int drainPerSecond = settings != null
+                ? settings.StrengthDrainPerSecond
+                : 6;
+            contact.DrainProgress +=
+                drainPerSecond * interval;
+            int transferAmount =
+                Mathf.FloorToInt(contact.DrainProgress);
 
-            territoryManager.TryTransferStrength(
-                contact.FirstPlayer,
-                contact.SecondPlayer,
-                transferAmount
-            );
+            if (transferAmount > 0)
+            {
+                contact.DrainProgress -= transferAmount;
+                territoryManager.TryTransferStrength(
+                    contact.FirstPlayer,
+                    contact.SecondPlayer,
+                    transferAmount
+                );
+            }
+
             contact.NextTransfer = TickTimer.CreateFromSeconds(
                 Runner,
                 interval
@@ -304,11 +313,11 @@ public class HexStrengthCombatManager : NetworkBehaviour
             };
             activeContacts.Add(contactKey, contact);
 
-            float immediateAmount = settings != null
+            int immediateAmount = settings != null
                 ? settings.InitialContactDrain
-                : 1f;
+                : 1;
 
-            if (immediateAmount > 0f)
+            if (immediateAmount > 0)
             {
                 territoryManager.TryTransferStrength(
                     firstPlayer,

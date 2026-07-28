@@ -65,11 +65,11 @@ public class PlayerBonusNameTag : NetworkBehaviour
         if (GameChatNetwork.Instance != null)
             playerName = GameChatNetwork.Instance.GetPlayerName(Object.InputAuthority);
 
-        float displayedStrength = playerController != null
+        int displayedStrength = playerController != null
             ? playerController.DisplayedStrength
-            : 0f;
+            : 0;
 
-        nameText.text = $"{playerName} {displayedStrength:0.##}";
+        nameText.text = $"{playerName} {displayedStrength}";
     }
 
     private void UpdateNameTagPose()

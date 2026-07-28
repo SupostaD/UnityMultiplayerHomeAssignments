@@ -64,7 +64,7 @@ public class HexBallPlayerController :
                Mathf.Max(1f, movementBoostMultiplier);
     }
     
-    public float Strength
+    public int Strength
     {
         get
         {
@@ -72,11 +72,11 @@ public class HexBallPlayerController :
 
             return territoryManager != null && Object != null
                 ? territoryManager.GetStrength(Object.InputAuthority)
-                : 0f;
+                : 0;
         }
     }
 
-    public float DisplayedStrength
+    public int DisplayedStrength
     {
         get
         {
@@ -84,7 +84,7 @@ public class HexBallPlayerController :
 
             return territoryManager != null && Object != null
                 ? territoryManager.GetDisplayedStrength(Object.InputAuthority)
-                : 0f;
+                : 0;
         }
     }
 

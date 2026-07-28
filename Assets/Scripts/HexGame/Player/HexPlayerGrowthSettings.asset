@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::HexPlayerGrowthSettings
   minimumUniformScale: 0.25
   maximumUniformScale: 1
-  territoriesForMaximumSize: 169
+  strengthForMaximumSize: 169
   minimumSizeMaximumSpeed: 9
   minimumSizeAcceleration: 28
   minimumSizeBraking: 34

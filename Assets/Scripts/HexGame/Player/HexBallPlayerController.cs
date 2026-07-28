@@ -1797,7 +1797,10 @@ public class HexBallPlayerController :
             }
 
             if (Object != null && Object.HasInputAuthority)
+            {
                 DisableInputActions();
+                GameSceneManager.Instance?.ShowLocalPlayerEliminated();
+            }
 
             return;
         }

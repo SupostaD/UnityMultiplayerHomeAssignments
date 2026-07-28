@@ -262,7 +262,9 @@ public sealed class NetworkThirdPersonCameraRig : NetworkBehaviour
             lockCursorWhilePlaying &&
             isLocalPlayer &&
             !GameInputBlocker.IsGameplayInputBlocked &&
-            (GameSceneManager.Instance == null || !GameSceneManager.Instance.IsGameEnded);
+            (GameSceneManager.Instance == null ||
+             (!GameSceneManager.Instance.IsGameEnded &&
+              !GameSceneManager.Instance.IsLocalPlayerEliminated));
 
         SetCursorLocked(shouldLock);
     }

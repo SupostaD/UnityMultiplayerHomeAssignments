@@ -22,8 +22,12 @@ public class GamePauseUI : MonoBehaviour
 
     private void Update()
     {
-        if (GameSceneManager.Instance != null && GameSceneManager.Instance.IsGameEnded)
+        if (GameSceneManager.Instance != null &&
+            (GameSceneManager.Instance.IsGameEnded ||
+             GameSceneManager.Instance.IsLocalPlayerEliminated))
+        {
             return;
+        }
 
         if (Input.GetKeyDown(KeyCode.Escape))
         {

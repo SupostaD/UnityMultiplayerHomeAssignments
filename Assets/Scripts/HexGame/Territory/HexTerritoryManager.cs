@@ -430,7 +430,7 @@ public class HexTerritoryManager : NetworkBehaviour
                 affectedPlayerObject.transform.position +
                 Vector3.up * fallVFXHeightOffset;
 
-            RPC_PlayDeathZoneFallVFX(vfxPosition);
+            RPC_PlayFallVFX(vfxPosition);
         }
 
         HexGameRulesSettings rules = GetGameRulesSettings();
@@ -464,7 +464,7 @@ public class HexTerritoryManager : NetworkBehaviour
     }
     
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
-    private void RPC_PlayDeathZoneFallVFX(Vector3 worldPosition)
+    private void RPC_PlayFallVFX(Vector3 worldPosition)
     {
         fallVFX?.PlayAbyssExplosion(worldPosition);
     }
@@ -837,6 +837,8 @@ public class HexTerritoryManager : NetworkBehaviour
             return;
         }
 
+        PlayEliminationVFX(playerSlot);
+
         PlayerStrengths.Set(playerSlot, 0f);
         PlayerTerritoryCounts.Set(playerSlot, 0);
         EliminatedPlayers.Set(playerSlot, true);
@@ -856,6 +858,29 @@ public class HexTerritoryManager : NetworkBehaviour
                 );
             }
         }
+    }
+
+    private void PlayEliminationVFX(int playerSlot)
+    {
+        if (Runner == null ||
+            !TryGetPlayerByOwnerKey(
+                playerSlot + 1,
+                out PlayerRef eliminatedPlayer))
+        {
+            return;
+        }
+
+        NetworkObject playerObject =
+            Runner.GetPlayerObject(eliminatedPlayer);
+
+        if (playerObject == null)
+            return;
+
+        Vector3 vfxPosition =
+            playerObject.transform.position +
+            Vector3.up * fallVFXHeightOffset;
+
+        RPC_PlayFallVFX(vfxPosition);
     }
 
     private int CountOwnedTiles(int ownerKey)

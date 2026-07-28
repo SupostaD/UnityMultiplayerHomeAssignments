@@ -72,6 +72,8 @@ public class GameSceneManager :
     [SerializeField] private GameObject endGamePanel;
     [SerializeField] private TMP_Text endGameMessageText;
     [SerializeField] private TMP_Text matchTimerText;
+    [SerializeField, TextArea] private string localPlayerEliminatedMessage =
+        "YOU DIED";
     [SerializeField] private int mainMenuSceneBuildIndex = 0;
 
     [Networked, OnChangedRender(nameof(OnOccupiedCharactersChanged))]
@@ -107,9 +109,11 @@ public class GameSceneManager :
 
     private bool endGamePanelShown;
     private bool gameEnded;
+    private bool localPlayerEliminated;
     private bool isLeavingGameIntentionally;
 
     public bool IsGameEnded => gameEnded || MatchEnded;
+    public bool IsLocalPlayerEliminated => localPlayerEliminated;
     public bool IsMatchStarted => MatchStarted;
     public HexTerritoryManager HexTerritory => hexTerritoryManager;
     public HexStrengthCombatManager HexStrengthCombat => hexStrengthCombatManager;
@@ -270,6 +274,7 @@ public class GameSceneManager :
         bool canEndGame =
             runner != null &&
             runner.IsSharedModeMasterClient &&
+            !localPlayerEliminated &&
             !IsGameEnded;
 
         if (endGameButton != null)
@@ -348,10 +353,46 @@ public class GameSceneManager :
         }
     }
 
+    public void ShowLocalPlayerEliminated()
+    {
+        if (localPlayerEliminated || MatchEnded)
+            return;
+
+        localPlayerEliminated = true;
+
+        GameInputBlocker.UnblockGameplayInput();
+        gamePauseUI?.CloseForGameEnd();
+        characterSelectionUI?.Hide();
+
+        if (endGameButton != null)
+            endGameButton.gameObject.SetActive(false);
+
+        if (matchTimerText != null)
+            matchTimerText.gameObject.SetActive(false);
+
+        string message = string.IsNullOrWhiteSpace(
+            localPlayerEliminatedMessage)
+                ? "YOU DIED"
+                : localPlayerEliminatedMessage;
+
+        if (endGameUI != null)
+        {
+            endGameUI.Show(message);
+        }
+        else if (endGamePanel != null)
+        {
+            endGamePanel.SetActive(true);
+
+            if (endGameMessageText != null)
+                endGameMessageText.text = message;
+        }
+    }
+
     private void HideEndGamePanel()
     {
         endGamePanelShown = false;
         gameEnded = false;
+        localPlayerEliminated = false;
 
         if (endGameUI != null)
             endGameUI.Hide();
@@ -396,6 +437,7 @@ public class GameSceneManager :
         bool shouldShow =
             Runner != null &&
             MatchStarted &&
+            !localPlayerEliminated &&
             !IsGameEnded;
 
         matchTimerText.gameObject.SetActive(shouldShow);

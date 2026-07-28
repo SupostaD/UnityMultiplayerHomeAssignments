@@ -76,7 +76,7 @@ public class HexBallPlayerController :
         }
     }
 
-    public int DisplayedStrength
+    public float DisplayedStrength
     {
         get
         {
@@ -84,7 +84,7 @@ public class HexBallPlayerController :
 
             return territoryManager != null && Object != null
                 ? territoryManager.GetDisplayedStrength(Object.InputAuthority)
-                : 0;
+                : 0f;
         }
     }
 
@@ -119,7 +119,7 @@ public class HexBallPlayerController :
             HexPlayerGrowthSettings settings = GetGrowthSettings();
 
             return settings != null
-                ? settings.EvaluateMass(TerritoryCount)
+                ? settings.EvaluateMass(Strength)
                 : body != null
                     ? body.mass
                     : 1f;
@@ -1743,21 +1743,21 @@ public class HexBallPlayerController :
         if (settings == null)
             return;
 
-        int territoryCount = TerritoryCount;
-        float uniformScale = settings.EvaluateUniformScale(territoryCount);
+        float strength = Strength;
+        float uniformScale = settings.EvaluateUniformScale(strength);
 
         transform.localScale =
             new Vector3(uniformScale, uniformScale, uniformScale);
 
         currentMaximumSpeed =
-            settings.EvaluateMaximumSpeed(territoryCount);
+            settings.EvaluateMaximumSpeed(strength);
         currentAcceleration =
-            settings.EvaluateAcceleration(territoryCount);
+            settings.EvaluateAcceleration(strength);
         currentBraking =
-            settings.EvaluateBraking(territoryCount);
+            settings.EvaluateBraking(strength);
 
         if (body != null)
-            body.mass = settings.EvaluateMass(territoryCount);
+            body.mass = settings.EvaluateMass(strength);
     }
 
     private static bool ShouldDisablePhysicalRolling()

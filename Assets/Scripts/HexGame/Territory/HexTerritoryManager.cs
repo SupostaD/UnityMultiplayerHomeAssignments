@@ -156,13 +156,13 @@ public class HexTerritoryManager : NetworkBehaviour
             : 0f;
     }
 
-    public int GetDisplayedStrength(PlayerRef player)
+    public float GetDisplayedStrength(PlayerRef player)
     {
         float strength = GetStrength(player);
 
         return strength <= MinimumStrength
-            ? 0
-            : Mathf.Max(1, Mathf.CeilToInt(strength - MinimumStrength));
+            ? 0f
+            : strength;
     }
 
     public int GetTerritoryCount(PlayerRef player)

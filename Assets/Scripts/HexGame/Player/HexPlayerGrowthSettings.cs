@@ -1,14 +1,16 @@
 using UnityEngine;
+using UnityEngine.Serialization;
 
 [CreateAssetMenu(
     fileName = "HexPlayerGrowthSettings",
     menuName = "Hex Game/Player Growth Settings")]
 public sealed class HexPlayerGrowthSettings : ScriptableObject
 {
-    [Header("Territory To Size")]
+    [Header("Strength To Size")]
     [SerializeField, Min(0.01f)] private float minimumUniformScale = 0.25f;
     [SerializeField, Min(0.01f)] private float maximumUniformScale = 1f;
-    [SerializeField, Min(1)] private int territoriesForMaximumSize = 169;
+    [FormerlySerializedAs("territoriesForMaximumSize")]
+    [SerializeField, Min(0.01f)] private float strengthForMaximumSize = 169f;
 
     [Header("Movement At Minimum Size")]
     [SerializeField, Min(0.1f)] private float minimumSizeMaximumSpeed = 9f;
@@ -24,15 +26,15 @@ public sealed class HexPlayerGrowthSettings : ScriptableObject
     [SerializeField, Min(0.01f)] private float minimumSizeMass = 1f;
     [SerializeField, Min(0f)] private float massScaleExponent = 1f;
 
-    public float EvaluateGrowthProgress(int territoryCount)
+    public float EvaluateGrowthProgress(float strength)
     {
         return Mathf.Clamp01(
-            Mathf.Max(0, territoryCount) /
-            (float)Mathf.Max(1, territoriesForMaximumSize)
+            Mathf.Max(0f, strength) /
+            Mathf.Max(0.01f, strengthForMaximumSize)
         );
     }
 
-    public float EvaluateUniformScale(int territoryCount)
+    public float EvaluateUniformScale(float strength)
     {
         float minimumScale = Mathf.Max(0.01f, minimumUniformScale);
         float maximumScale = Mathf.Max(minimumScale, maximumUniformScale);
@@ -40,41 +42,41 @@ public sealed class HexPlayerGrowthSettings : ScriptableObject
         return Mathf.Lerp(
             minimumScale,
             maximumScale,
-            EvaluateGrowthProgress(territoryCount)
+            EvaluateGrowthProgress(strength)
         );
     }
 
-    public float EvaluateMaximumSpeed(int territoryCount)
+    public float EvaluateMaximumSpeed(float strength)
     {
         return Mathf.Lerp(
             Mathf.Max(0.1f, minimumSizeMaximumSpeed),
             Mathf.Max(0.1f, maximumSizeMaximumSpeed),
-            EvaluateGrowthProgress(territoryCount)
+            EvaluateGrowthProgress(strength)
         );
     }
 
-    public float EvaluateAcceleration(int territoryCount)
+    public float EvaluateAcceleration(float strength)
     {
         return Mathf.Lerp(
             Mathf.Max(0.1f, minimumSizeAcceleration),
             Mathf.Max(0.1f, maximumSizeAcceleration),
-            EvaluateGrowthProgress(territoryCount)
+            EvaluateGrowthProgress(strength)
         );
     }
 
-    public float EvaluateBraking(int territoryCount)
+    public float EvaluateBraking(float strength)
     {
         return Mathf.Lerp(
             Mathf.Max(0.1f, minimumSizeBraking),
             Mathf.Max(0.1f, maximumSizeBraking),
-            EvaluateGrowthProgress(territoryCount)
+            EvaluateGrowthProgress(strength)
         );
     }
 
-    public float EvaluateMass(int territoryCount)
+    public float EvaluateMass(float strength)
     {
         float minimumScale = Mathf.Max(0.01f, minimumUniformScale);
-        float currentScale = EvaluateUniformScale(territoryCount);
+        float currentScale = EvaluateUniformScale(strength);
         float scaleRatio = currentScale / minimumScale;
 
         return Mathf.Max(0.01f, minimumSizeMass) *

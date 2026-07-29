@@ -7665,7 +7665,7 @@ MonoBehaviour:
   gameModeOptions:
   - gameModeName: Deathmatch
     maps:
-    - mapName: RaceScene1
+    - mapName: HexGameScene
       sceneBuildIndex: 1
   panelsUI: {fileID: 354985232}
   openLobbyPanelButton: {fileID: 1704736093}

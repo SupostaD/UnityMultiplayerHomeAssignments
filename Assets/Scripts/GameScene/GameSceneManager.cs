@@ -14,6 +14,13 @@ public class GameSceneManager :
     INetworkRunnerCallbacks,
     IStateAuthorityChanged
 {
+    private enum MatchEndReason
+    {
+        Timer = 0,
+        Manual = 1,
+        LastPlayerStanding = 2
+    }
+
     private static readonly Color[] DefaultCharacterColors =
     {
         Color.red,
@@ -253,8 +260,11 @@ public class GameSceneManager :
             return;
         }
 
+        if (TryEndMatchWhenOnePlayerRemains())
+            return;
+
         if (MatchTimer.Expired(Runner))
-            EndMatchInternal(false);
+            EndMatchInternal(MatchEndReason.Timer);
     }
 
     public override void Render()
@@ -300,7 +310,7 @@ public class GameSceneManager :
 
         if (Object != null && Object.HasStateAuthority)
         {
-            EndMatchInternal(true);
+            EndMatchInternal(MatchEndReason.Manual);
             return;
         }
 
@@ -318,7 +328,7 @@ public class GameSceneManager :
             return;
         }
 
-        EndMatchInternal(true);
+        EndMatchInternal(MatchEndReason.Manual);
     }
 
     private void ShowEndGamePanel(string message)
@@ -402,7 +412,35 @@ public class GameSceneManager :
         RefreshMatchTimerText();
     }
 
-    private void EndMatchInternal(bool endedManually)
+    private bool TryEndMatchWhenOnePlayerRemains()
+    {
+        if (Runner == null ||
+            hexTerritoryManager == null)
+        {
+            return false;
+        }
+
+        int alivePlayerCount = 0;
+
+        foreach (PlayerRef player in Runner.ActivePlayers)
+        {
+            if (hexTerritoryManager.IsPlayerEliminated(player))
+                continue;
+
+            alivePlayerCount++;
+
+            if (alivePlayerCount > 1)
+                return false;
+        }
+
+        if (alivePlayerCount != 1)
+            return false;
+
+        EndMatchInternal(MatchEndReason.LastPlayerStanding);
+        return true;
+    }
+
+    private void EndMatchInternal(MatchEndReason reason)
     {
         if (Object == null ||
             !Object.HasStateAuthority ||
@@ -412,7 +450,7 @@ public class GameSceneManager :
         }
 
         string results =
-            BuildFinalResults(endedManually);
+            BuildFinalResults(reason);
 
         FinalResults = results;
         MatchTimer = default;
@@ -456,7 +494,7 @@ public class GameSceneManager :
             $"{minutes}:{seconds:00}";
     }
 
-    private string BuildFinalResults(bool endedManually)
+    private string BuildFinalResults(MatchEndReason reason)
     {
         List<MatchResultEntry> results =
             new List<MatchResultEntry>();
@@ -547,13 +585,25 @@ public class GameSceneManager :
             results,
             aliveCount
         );
-        builder.AppendLine(
-            endedManually
-                ? "Ended by MasterClient"
-                : "Time is over"
-        );
+        builder.AppendLine(GetMatchEndReasonText(reason));
 
         return builder.ToString();
+    }
+
+    private static string GetMatchEndReasonText(
+        MatchEndReason reason)
+    {
+        switch (reason)
+        {
+            case MatchEndReason.Manual:
+                return "Ended by MasterClient";
+
+            case MatchEndReason.LastPlayerStanding:
+                return "Last player standing";
+
+            default:
+                return "Time is over";
+        }
     }
 
     private static int CompareMatchResults(

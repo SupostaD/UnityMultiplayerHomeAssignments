@@ -19,6 +19,9 @@ public class GameChatUI : MonoBehaviour
 
     private readonly List<ChatMessageRowUI> messageRows = new List<ChatMessageRowUI>();
     private readonly List<PlayerRef> dropdownPlayers = new List<PlayerRef>();
+    private bool isChatInputActive;
+    private int chatOpenedFrame = -1;
+    private int chatClosedFrame = -1;
 
     private const int MaxChatLines = 20;
     private const int AllOptionIndex = 0;
@@ -53,20 +56,29 @@ public class GameChatUI : MonoBehaviour
         if (chatInputField == null)
             return;
 
-        if (!chatInputField.isFocused)
+        bool enterPressed =
+            Input.GetKeyDown(KeyCode.Return) ||
+            Input.GetKeyDown(KeyCode.KeypadEnter);
+
+        if (!isChatInputActive)
+        {
+            if (enterPressed &&
+                Time.frameCount != chatClosedFrame)
+            {
+                BeginChatInput();
+            }
+
             return;
+        }
 
         if (Input.GetKeyDown(KeyCode.Escape))
         {
-            chatInputField.DeactivateInputField();
-            GameInputBlocker.UnblockGameplayInput();
+            CloseChatInput(true);
             return;
         }
 
-        if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
-        {
-            SendCurrentMessage();
-        }
+        if (enterPressed && !chatInputField.isFocused)
+            FocusChatInput();
     }
 
     private void OnDestroy()
@@ -88,17 +100,68 @@ public class GameChatUI : MonoBehaviour
     
     private void OnChatInputSelected(string text)
     {
+        isChatInputActive = true;
         GameInputBlocker.BlockGameplayInput();
+        ShowCursor();
     }
 
     private void OnChatInputDeselected(string text)
     {
-        GameInputBlocker.UnblockGameplayInput();
+        if (!isChatInputActive)
+            GameInputBlocker.UnblockGameplayInput();
     }
 
     private void OnInputSubmitted(string text)
     {
+        if (!isChatInputActive ||
+            Time.frameCount == chatOpenedFrame)
+        {
+            return;
+        }
+
         SendCurrentMessage();
+    }
+
+    private void BeginChatInput()
+    {
+        if (chatInputField == null ||
+            !chatInputField.interactable ||
+            GameInputBlocker.IsGameplayInputBlocked)
+        {
+            return;
+        }
+
+        GameSceneManager sceneManager =
+            GameSceneManager.Instance;
+
+        if (sceneManager != null &&
+            (sceneManager.IsGameEnded ||
+             sceneManager.IsLocalPlayerEliminated))
+        {
+            return;
+        }
+
+        isChatInputActive = true;
+        chatOpenedFrame = Time.frameCount;
+        GameInputBlocker.BlockGameplayInput();
+        ShowCursor();
+        FocusChatInput();
+    }
+
+    private void FocusChatInput()
+    {
+        if (chatInputField == null)
+            return;
+
+        chatInputField.Select();
+        chatInputField.ActivateInputField();
+        chatInputField.MoveTextEnd(false);
+    }
+
+    private static void ShowCursor()
+    {
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
     }
 
     private void SendCurrentMessage()
@@ -162,11 +225,21 @@ public class GameChatUI : MonoBehaviour
 
     private void ClearInput()
     {
-        if (chatInputField == null)
-            return;
+        CloseChatInput(true);
+    }
 
-        chatInputField.text = string.Empty;
-        chatInputField.DeactivateInputField();
+    private void CloseChatInput(bool clearText)
+    {
+        isChatInputActive = false;
+        chatClosedFrame = Time.frameCount;
+
+        if (chatInputField != null)
+        {
+            if (clearText)
+                chatInputField.text = string.Empty;
+
+            chatInputField.DeactivateInputField();
+        }
 
         GameInputBlocker.UnblockGameplayInput();
     }

@@ -6123,6 +6123,8 @@ GameObject:
   - component: {fileID: 6649934649146063477}
   - component: {fileID: 189120701933067952}
   - component: {fileID: -3564408346710364079}
+  - component: {fileID: 1896719030962446361}
+  - component: {fileID: 3619511500796731114}
   m_Layer: 0
   m_Name: PlayerPrefab
   m_TagString: Untagged
@@ -6300,10 +6302,11 @@ MonoBehaviour:
   playerCharacter: {fileID: 1183385551363767509}
   networkTransform: {fileID: 5640217182530287932}
   abilityController: {fileID: -3564408346710364079}
+  inputProvider: {fileID: 1896719030962446361}
+  captureController: {fileID: 3619511500796731114}
   configurePhysicsByAuthority: 1
   stateAuthorityUsesGravity: 1
   inputDeadZone: 0.08
-  jumpAction: {fileID: -2099379676528639254, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   jumpSpeed: 10
   groundCheckDistance: 0.2
   groundCheckRadiusScale: 0.9
@@ -6312,15 +6315,10 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 64
   jumpVFX: {fileID: 2024340724247034420}
-  dashAction: {fileID: -7471211009204490832, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   dashSpeed: 16
   dashCooldownSeconds: 1
   dashBoostDuration: 0.2
   dashVFX: {fileID: 7662806676386330043}
-  captureRetrySeconds: 0.15
-  moveAction: {fileID: -1680190386980627800, guid: 052faaac586de48259a63d0c4782560b, type: 3}
-  createDefaultMoveAction: 0
-  cameraRig: {fileID: 189120701933067952}
   playSounds: 1
 --- !u!114 &189120701933067952
 MonoBehaviour:
@@ -6367,6 +6365,37 @@ MonoBehaviour:
     _value: 0
   _HasDoubleJumpCharge:
     _value: 0
+--- !u!114 &1896719030962446361
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6897131918027433929}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4c0bb81287684686a0d4e9f14ce27e2a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HexBallInputProvider
+  moveAction: {fileID: -1680190386980627800, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  jumpAction: {fileID: -2099379676528639254, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  dashAction: {fileID: -7471211009204490832, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  createDefaultMoveAction: 1
+  cameraRig: {fileID: 189120701933067952}
+--- !u!114 &3619511500796731114
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6897131918027433929}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e51a1ee37fdd4e68b8a2feaa53699a08, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HexBallCaptureController
+  body: {fileID: 8520783395990000366}
+  captureRetrySeconds: 0.15
 --- !u!1 &6915981727023568571
 GameObject:
   m_ObjectHideFlags: 0

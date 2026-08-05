@@ -1,14 +1,10 @@
-using System;
 using System.Collections.Generic;
 using Fusion;
-using Fusion.Sockets;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 [DisallowMultipleComponent]
 public class HexBallPlayerController :
     NetworkBehaviour,
-    INetworkRunnerCallbacks,
     IStateAuthorityChanged
 {
     [Header("Physics")]
@@ -17,12 +13,13 @@ public class HexBallPlayerController :
     [SerializeField] private NetworkPlayerCharacter playerCharacter;
     [SerializeField] private NetworkTransform networkTransform;
     [SerializeField] private HexPlayerAbilityController abilityController;
+    [SerializeField] private HexBallInputProvider inputProvider;
+    [SerializeField] private HexBallCaptureController captureController;
     [SerializeField] private bool configurePhysicsByAuthority = true;
     [SerializeField] private bool stateAuthorityUsesGravity = true;
     [SerializeField, Range(0f, 0.5f)] private float inputDeadZone = 0.08f;
 
     [Header("Jump")]
-    [SerializeField] private InputActionReference jumpAction;
     [SerializeField, Min(0.1f)] private float jumpSpeed = 7f;
     [SerializeField, Min(0.01f)] private float groundCheckDistance = 0.2f;
     [SerializeField, Range(0.5f, 0.99f)] private float groundCheckRadiusScale = 0.9f;
@@ -31,22 +28,11 @@ public class HexBallPlayerController :
     [SerializeField] private BallJumpVFX jumpVFX;
     
     [Header("Dash")]
-    [SerializeField] private InputActionReference dashAction;
     [SerializeField, Min(0.1f)] private float dashSpeed = 16f;
     [SerializeField, Min(0.05f)] private float dashCooldownSeconds = 1f;
     [SerializeField, Min(0.05f)] private float dashBoostDuration = 0.2f;
     [SerializeField] private BallDashVFX dashVFX;
 
-    [Header("Hex Capture")]
-    [SerializeField, Min(0.05f)] private float captureRetrySeconds = 0.15f;
-
-    [Header("New Input System")]
-    [SerializeField] private InputActionReference moveAction;
-    [SerializeField] private bool createDefaultMoveAction = true;
-
-    [Header("Camera Relative Movement")]
-    [SerializeField] private NetworkThirdPersonCameraRig cameraRig;
-    
     [Header("Audio")]
     [SerializeField] private bool playSounds = true;
 
@@ -141,20 +127,11 @@ public class HexBallPlayerController :
         }
     }
 
-    private NetworkRunner registeredRunner;
-    private InputAction fallbackMoveAction;
-    private bool localInputEnabled;
     private RigidbodyConstraints initialConstraints;
     private PhysicsMaterial initialColliderMaterial;
     private PhysicsMaterial slidingMaterial;
     private readonly RaycastHit[] groundHits = new RaycastHit[8];
     private NetworkButtons previousButtons;
-    private TickTimer captureRetryTimer;
-    private HexCoord lastCaptureCoordinate;
-    private bool hasLastCaptureCoordinate;
-    private HexCoord lastSafeCoordinate;
-    private bool hasLastSafeCoordinate;
-    private bool missingTerritoryManagerLogged;
     private bool eliminationStateApplied;
     private bool appliedEliminatedState;
     private float currentMaximumSpeed = 9f;
@@ -247,8 +224,6 @@ public class HexBallPlayerController :
         if (bodyCollider != null)
             initialColliderMaterial = bodyCollider.sharedMaterial;
 
-        if (createDefaultMoveAction)
-            CreateFallbackMoveAction();
     }
 
     public override void Spawned()
@@ -276,7 +251,7 @@ public class HexBallPlayerController :
         }
 
         if (Object.HasInputAuthority)
-            RegisterLocalInput();
+            inputProvider?.Register(Runner);
     }
 
     public void StateAuthorityChanged()
@@ -289,25 +264,28 @@ public class HexBallPlayerController :
     public override void Despawned(NetworkRunner runner, bool hasState)
     {
         UnregisterCollisionReferences();
-        UnregisterLocalInput();
+        inputProvider?.Unregister();
     }
 
     private void OnEnable()
     {
         RegisterCollisionReferences();
+
+        if (Object != null && Object.HasInputAuthority)
+            inputProvider?.SetGameplayInputEnabled(true);
     }
 
     private void OnDisable()
     {
         UnregisterCollisionReferences();
 
-        if (localInputEnabled)
-            DisableInputActions();
+        if (Object != null && Object.HasInputAuthority)
+            inputProvider?.SetGameplayInputEnabled(false);
     }
 
     private void OnDestroy()
     {
-        UnregisterLocalInput();
+        inputProvider?.Unregister();
         RestoreColliderMaterial();
 
         if (slidingMaterial != null)
@@ -316,8 +294,6 @@ public class HexBallPlayerController :
             slidingMaterial = null;
         }
 
-        fallbackMoveAction?.Dispose();
-        fallbackMoveAction = null;
     }
 
     public override void FixedUpdateNetwork()
@@ -396,7 +372,11 @@ public class HexBallPlayerController :
         CleanupExpiredPredictedImpacts();
 
         if (!waitingForMatchStart)
-            TryCaptureCurrentHex();
+            captureController?.TickCapture(
+                Runner,
+                Object.InputAuthority,
+                IsTouchingGroundForCapture()
+            );
     }
 
     public override void Render()
@@ -424,38 +404,25 @@ public class HexBallPlayerController :
             );
         }
 
-        RememberSafeHexAtPosition(spawnPosition);
+        captureController?.RememberSafeHexAtPosition(spawnPosition);
     }
 
     public bool ReturnToLastSafeHex()
     {
         if (Object == null ||
             !Object.HasStateAuthority ||
-            !hasLastSafeCoordinate)
+            captureController == null)
         {
             return false;
         }
 
-        HexTerritoryManager territoryManager =
-            GetTerritoryManager();
-
-        if (territoryManager == null ||
-            !territoryManager.TryGetTileTopCenter(
-                lastSafeCoordinate,
-                out Vector3 tileTopCenter))
+        if (!captureController.TryGetReturnPosition(
+                CollisionRadius,
+                out Vector3 returnPosition))
         {
             return false;
         }
 
-        HexGameRulesSettings rules =
-            GetGameRulesSettings();
-        float clearance = rules != null
-            ? rules.DeathZoneReturnClearance
-            : 0.1f;
-        Vector3 returnPosition =
-            tileTopCenter +
-            Vector3.up *
-            (Mathf.Max(0.01f, CollisionRadius) + clearance);
         Quaternion returnRotation =
             body != null ? body.rotation : transform.rotation;
 
@@ -479,8 +446,7 @@ public class HexBallPlayerController :
             );
         }
 
-        hasLastCaptureCoordinate = false;
-        captureRetryTimer = default;
+        captureController.ResetCaptureAttempt();
         return true;
     }
 
@@ -516,15 +482,15 @@ public class HexBallPlayerController :
                 this
             );
 
-        if (cameraRig == null)
+        if (inputProvider == null)
             Debug.LogError(
-                "HexBallPlayerController: Camera Rig is not assigned.",
+                "HexBallPlayerController: Input Provider is not assigned.",
                 this
             );
 
-        if (jumpAction == null || jumpAction.action == null)
+        if (captureController == null)
             Debug.LogError(
-                "HexBallPlayerController: Jump Action is not assigned.",
+                "HexBallPlayerController: Capture Controller is not assigned.",
                 this
             );
     }
@@ -809,93 +775,6 @@ public class HexBallPlayerController :
                bodyCollider != null &&
                bodyCollider.enabled &&
                IsGrounded();
-    }
-
-    private void TryCaptureCurrentHex()
-    {
-        GameSceneManager sceneManager = GameSceneManager.Instance;
-        HexTerritoryManager territoryManager =
-            sceneManager != null ? sceneManager.HexTerritory : null;
-
-        if (territoryManager == null)
-        {
-            if (!missingTerritoryManagerLogged)
-            {
-                Debug.LogError(
-                    "HexBallPlayerController: Hex Territory Manager is not assigned on GameSceneManager.",
-                    this
-                );
-                missingTerritoryManagerLogged = true;
-            }
-
-            return;
-        }
-
-        missingTerritoryManagerLogged = false;
-
-        if (!IsTouchingGroundForCapture())
-        {
-            hasLastCaptureCoordinate = false;
-            return;
-        }
-
-        if (!territoryManager.TryGetCoordinate(
-                body.worldCenterOfMass,
-                out HexCoord coordinate))
-        {
-            hasLastCaptureCoordinate = false;
-            return;
-        }
-
-        lastSafeCoordinate = coordinate;
-        hasLastSafeCoordinate = true;
-
-        if (territoryManager.IsOwnedBy(coordinate, Object.InputAuthority))
-        {
-            lastCaptureCoordinate = coordinate;
-            hasLastCaptureCoordinate = true;
-            return;
-        }
-
-        bool changedCoordinate =
-            !hasLastCaptureCoordinate ||
-            lastCaptureCoordinate != coordinate;
-
-        if (!changedCoordinate &&
-            !captureRetryTimer.ExpiredOrNotRunning(Runner))
-        {
-            return;
-        }
-
-        lastCaptureCoordinate = coordinate;
-        hasLastCaptureCoordinate = true;
-        captureRetryTimer = TickTimer.CreateFromSeconds(
-            Runner,
-            Mathf.Max(0.05f, captureRetrySeconds)
-        );
-        territoryManager.RequestCapture(
-            coordinate,
-            body.position,
-            true
-        );
-    }
-
-    private void RememberSafeHexAtPosition(
-        Vector3 worldPosition)
-    {
-        HexTerritoryManager territoryManager =
-            GetTerritoryManager();
-
-        if (territoryManager == null ||
-            !territoryManager.TryGetCoordinate(
-                worldPosition,
-                out HexCoord coordinate))
-        {
-            return;
-        }
-
-        lastSafeCoordinate = coordinate;
-        hasLastSafeCoordinate = true;
     }
 
     private void OnCollisionStay(Collision collision)
@@ -1798,7 +1677,7 @@ public class HexBallPlayerController :
 
             if (Object != null && Object.HasInputAuthority)
             {
-                DisableInputActions();
+                inputProvider?.SetGameplayInputEnabled(false);
                 GameSceneManager.Instance?.ShowLocalPlayerEliminated();
             }
 
@@ -1808,7 +1687,7 @@ public class HexBallPlayerController :
         ConfigurePhysicsForAuthority();
 
         if (Object != null && Object.HasInputAuthority)
-            EnableInputActions();
+            inputProvider?.SetGameplayInputEnabled(true);
     }
 
     private void StopBodyMotion()
@@ -1901,186 +1780,4 @@ public class HexBallPlayerController :
             : null;
     }
 
-    private void RegisterLocalInput()
-    {
-        if (registeredRunner != null || Runner == null)
-            return;
-
-        registeredRunner = Runner;
-        registeredRunner.ProvideInput = true;
-        registeredRunner.AddCallbacks(this);
-        EnableInputActions();
-    }
-
-    private void UnregisterLocalInput()
-    {
-        DisableInputActions();
-
-        if (registeredRunner != null)
-            registeredRunner.RemoveCallbacks(this);
-
-        registeredRunner = null;
-    }
-
-    private void CreateFallbackMoveAction()
-    {
-        fallbackMoveAction = new InputAction(
-            "Hex Ball Move",
-            InputActionType.Value,
-            expectedControlType: "Vector2"
-        );
-
-        fallbackMoveAction.AddCompositeBinding("2DVector")
-            .With("Up", "<Keyboard>/w")
-            .With("Down", "<Keyboard>/s")
-            .With("Left", "<Keyboard>/a")
-            .With("Right", "<Keyboard>/d");
-
-        fallbackMoveAction.AddCompositeBinding("2DVector")
-            .With("Up", "<Keyboard>/upArrow")
-            .With("Down", "<Keyboard>/downArrow")
-            .With("Left", "<Keyboard>/leftArrow")
-            .With("Right", "<Keyboard>/rightArrow");
-
-        fallbackMoveAction.AddBinding("<Gamepad>/leftStick");
-    }
-
-    private void EnableInputActions()
-    {
-        if (localInputEnabled)
-            return;
-
-        if (moveAction != null && moveAction.action != null)
-            moveAction.action.Enable();
-
-        if (jumpAction != null && jumpAction.action != null)
-            jumpAction.action.Enable();
-        
-        if (dashAction != null && dashAction.action != null)
-            dashAction.action.Enable();
-
-        fallbackMoveAction?.Enable();
-        localInputEnabled = true;
-    }
-
-    private void DisableInputActions()
-    {
-        if (!localInputEnabled)
-            return;
-
-        if (moveAction != null && moveAction.action != null)
-            moveAction.action.Disable();
-
-        if (jumpAction != null && jumpAction.action != null)
-            jumpAction.action.Disable();
-        
-        if (dashAction != null && dashAction.action != null)
-            dashAction.action.Disable();
-
-        fallbackMoveAction?.Disable();
-        localInputEnabled = false;
-    }
-
-    private Vector2 ReadMoveInput()
-    {
-        InputAction action = moveAction != null && moveAction.action != null
-            ? moveAction.action
-            : fallbackMoveAction;
-
-        return action == null
-            ? Vector2.zero
-            : Vector2.ClampMagnitude(action.ReadValue<Vector2>(), 1f);
-    }
-
-    public void OnInput(NetworkRunner callbackRunner, NetworkInput input)
-    {
-        HexBallInputData inputData = default;
-
-        if (!GameInputBlocker.IsGameplayInputBlocked)
-        {
-            Vector2 moveInput = ReadMoveInput();
-
-            if (cameraRig != null)
-                moveInput = cameraRig.ConvertMoveInputToWorld(moveInput);
-
-            inputData.Move = moveInput;
-            inputData.Buttons.Set(
-                HexBallInputButton.Jump,
-                ReadJumpInput()
-            );
-            
-            inputData.Buttons.Set(
-                HexBallInputButton.Dash,
-                ReadDashInput()
-            );
-        }
-
-        input.Set(inputData);
-    }
-
-    private bool ReadJumpInput()
-    {
-        return jumpAction != null &&
-               jumpAction.action != null &&
-               jumpAction.action.IsPressed();
-    }
-
-    private bool ReadDashInput()
-    {
-        if (dashAction != null && dashAction.action != null)
-            return dashAction.action.IsPressed();
-        
-        return Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed;
-    }
-
-    public void OnInputMissing(NetworkRunner callbackRunner, PlayerRef player, NetworkInput input)
-    {
-        input.Set(new HexBallInputData());
-    }
-
-    public void OnPlayerJoined(NetworkRunner callbackRunner, PlayerRef player) { }
-    public void OnPlayerLeft(NetworkRunner callbackRunner, PlayerRef player) { }
-    public void OnShutdown(NetworkRunner callbackRunner, ShutdownReason shutdownReason) { }
-    public void OnConnectedToServer(NetworkRunner callbackRunner) { }
-    public void OnDisconnectedFromServer(NetworkRunner callbackRunner, NetDisconnectReason reason) { }
-    public void OnConnectRequest(
-        NetworkRunner callbackRunner,
-        NetworkRunnerCallbackArgs.ConnectRequest request,
-        byte[] token) { }
-    public void OnConnectFailed(
-        NetworkRunner callbackRunner,
-        NetAddress remoteAddress,
-        NetConnectFailedReason reason) { }
-    public void OnUserSimulationMessage(
-        NetworkRunner callbackRunner,
-        SimulationMessagePtr message) { }
-    public void OnSessionListUpdated(
-        NetworkRunner callbackRunner,
-        List<SessionInfo> sessionList) { }
-    public void OnCustomAuthenticationResponse(
-        NetworkRunner callbackRunner,
-        Dictionary<string, object> data) { }
-    public void OnHostMigration(
-        NetworkRunner callbackRunner,
-        HostMigrationToken hostMigrationToken) { }
-    public void OnSceneLoadDone(NetworkRunner callbackRunner) { }
-    public void OnSceneLoadStart(NetworkRunner callbackRunner) { }
-    public void OnObjectEnterAOI(
-        NetworkRunner callbackRunner,
-        NetworkObject obj,
-        PlayerRef player) { }
-    public void OnObjectExitAOI(
-        NetworkRunner callbackRunner,
-        NetworkObject obj,
-        PlayerRef player) { }
-    public void OnReliableDataReceived(
-        NetworkRunner callbackRunner,
-        PlayerRef player,
-        ReliableKey key,
-        ArraySegment<byte> data) { }
-    public void OnReliableDataProgress(
-        NetworkRunner callbackRunner,
-        PlayerRef player,
-        ReliableKey key,
-        float progress) { }
 }

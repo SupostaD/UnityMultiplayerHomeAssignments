@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading.Tasks;
 using Fusion;
 using Fusion.Sockets;
@@ -14,13 +13,6 @@ public class GameSceneManager :
     INetworkRunnerCallbacks,
     IStateAuthorityChanged
 {
-    private enum MatchEndReason
-    {
-        Timer = 0,
-        Manual = 1,
-        LastPlayerStanding = 2
-    }
-
     private static readonly Color[] DefaultCharacterColors =
     {
         Color.red,
@@ -264,7 +256,7 @@ public class GameSceneManager :
             return;
 
         if (MatchTimer.Expired(Runner))
-            EndMatchInternal(MatchEndReason.Timer);
+            EndMatchInternal(HexMatchEndReason.Timer);
     }
 
     public override void Render()
@@ -310,7 +302,7 @@ public class GameSceneManager :
 
         if (Object != null && Object.HasStateAuthority)
         {
-            EndMatchInternal(MatchEndReason.Manual);
+            EndMatchInternal(HexMatchEndReason.Manual);
             return;
         }
 
@@ -328,7 +320,7 @@ public class GameSceneManager :
             return;
         }
 
-        EndMatchInternal(MatchEndReason.Manual);
+        EndMatchInternal(HexMatchEndReason.Manual);
     }
 
     private void ShowEndGamePanel(string message)
@@ -436,11 +428,11 @@ public class GameSceneManager :
         if (alivePlayerCount != 1)
             return false;
 
-        EndMatchInternal(MatchEndReason.LastPlayerStanding);
+        EndMatchInternal(HexMatchEndReason.LastPlayerStanding);
         return true;
     }
 
-    private void EndMatchInternal(MatchEndReason reason)
+    private void EndMatchInternal(HexMatchEndReason reason)
     {
         if (Object == null ||
             !Object.HasStateAuthority ||
@@ -494,198 +486,13 @@ public class GameSceneManager :
             $"{minutes}:{seconds:00}";
     }
 
-    private string BuildFinalResults(MatchEndReason reason)
+    private string BuildFinalResults(HexMatchEndReason reason)
     {
-        List<MatchResultEntry> results =
-            new List<MatchResultEntry>();
-
-        if (Runner != null)
-        {
-            foreach (PlayerRef player in Runner.ActivePlayers)
-            {
-                results.Add(
-                    new MatchResultEntry
-                    {
-                        Player = player,
-                        PlayerName = GetShortPlayerName(player),
-                        Strength =
-                            hexTerritoryManager != null
-                                ? hexTerritoryManager
-                                    .GetDisplayedStrength(player)
-                                : 0,
-                        IsDead =
-                            hexTerritoryManager != null &&
-                            hexTerritoryManager
-                                .IsPlayerEliminated(player)
-                    }
-                );
-            }
-        }
-
-        results.Sort(CompareMatchResults);
-
-        StringBuilder builder = new StringBuilder();
-        builder.AppendLine("MATCH RESULTS");
-        builder.AppendLine();
-
-        int aliveCount = 0;
-
-        while (aliveCount < results.Count &&
-               !results[aliveCount].IsDead)
-        {
-            aliveCount++;
-        }
-
-        int resultIndex = 0;
-
-        while (resultIndex < aliveCount)
-        {
-            int groupEnd = resultIndex + 1;
-            int groupStrength =
-                results[resultIndex].Strength;
-
-            while (groupEnd < aliveCount &&
-                   results[groupEnd].Strength ==
-                   groupStrength)
-            {
-                groupEnd++;
-            }
-
-            bool isDraw = groupEnd - resultIndex > 1;
-            int place = resultIndex + 1;
-
-            for (int i = resultIndex; i < groupEnd; i++)
-            {
-                builder.Append(place);
-                builder.Append(". ");
-                builder.Append(results[i].PlayerName);
-                builder.Append(" - ");
-                builder.Append(results[i].Strength);
-                builder.Append(" STR");
-
-                if (isDraw)
-                    builder.Append(" - DRAW");
-
-                builder.AppendLine();
-            }
-
-            resultIndex = groupEnd;
-        }
-
-        for (int i = aliveCount; i < results.Count; i++)
-        {
-            builder.Append("Last. ");
-            builder.Append(results[i].PlayerName);
-            builder.AppendLine(" - DEAD");
-        }
-
-        builder.AppendLine();
-        AppendWinnerSummary(
-            builder,
-            results,
-            aliveCount
+        return HexMatchResultsFormatter.Build(
+            Runner,
+            hexTerritoryManager,
+            reason
         );
-        builder.AppendLine(GetMatchEndReasonText(reason));
-
-        return builder.ToString();
-    }
-
-    private static string GetMatchEndReasonText(
-        MatchEndReason reason)
-    {
-        switch (reason)
-        {
-            case MatchEndReason.Manual:
-                return "Ended by MasterClient";
-
-            case MatchEndReason.LastPlayerStanding:
-                return "Last player standing";
-
-            default:
-                return "Time is over";
-        }
-    }
-
-    private static int CompareMatchResults(
-        MatchResultEntry first,
-        MatchResultEntry second)
-    {
-        if (first.IsDead != second.IsDead)
-            return first.IsDead ? 1 : -1;
-
-        int strengthComparison =
-            second.Strength.CompareTo(first.Strength);
-
-        if (strengthComparison != 0)
-            return strengthComparison;
-
-        return first.Player.PlayerId.CompareTo(
-            second.Player.PlayerId
-        );
-    }
-
-    private static void AppendWinnerSummary(
-        StringBuilder builder,
-        List<MatchResultEntry> results,
-        int aliveCount)
-    {
-        if (aliveCount <= 0)
-        {
-            builder.AppendLine(
-                "Winner: nobody - all players are dead"
-            );
-            return;
-        }
-
-        int bestStrength = results[0].Strength;
-        int winnerCount = 1;
-
-        while (winnerCount < aliveCount &&
-               results[winnerCount].Strength ==
-               bestStrength)
-        {
-            winnerCount++;
-        }
-
-        if (winnerCount == 1)
-        {
-            builder.Append("Winner: ");
-            builder.AppendLine(results[0].PlayerName);
-            return;
-        }
-
-        builder.AppendLine(
-            "Winners: DRAW at first place"
-        );
-    }
-
-    private static string GetShortPlayerName(
-        PlayerRef player)
-    {
-        string playerName =
-            GameChatNetwork.Instance != null
-                ? GameChatNetwork.Instance.GetPlayerName(player)
-                : "Player " + player.PlayerId;
-
-        if (string.IsNullOrWhiteSpace(playerName))
-            playerName = "Player " + player.PlayerId;
-
-        playerName = playerName
-            .Replace('\n', ' ')
-            .Replace('\r', ' ')
-            .Trim();
-
-        return playerName.Length > 16
-            ? playerName.Substring(0, 16)
-            : playerName;
-    }
-
-    private struct MatchResultEntry
-    {
-        public PlayerRef Player;
-        public string PlayerName;
-        public int Strength;
-        public bool IsDead;
     }
 
     public async void LeaveCurrentGame()
